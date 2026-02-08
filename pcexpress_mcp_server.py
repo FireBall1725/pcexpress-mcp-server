@@ -21,6 +21,7 @@ This server provides tools for:
 import json
 import logging
 import os
+import re
 from typing import Any, Optional
 from datetime import datetime
 
@@ -118,35 +119,110 @@ class PCExpressAPI:
         response.raise_for_status()
         return response.json()
 
-    def search_products(self, query: str, size: int = 7) -> dict:
+    def _get_build_id(self) -> str:
         """
-        Search for products using type-ahead search
-
-        Args:
-            query: Search term
-            size: Number of results to return
+        Get the current Next.js build ID from the website
 
         Returns:
-            dict: Search results
+            str: Build ID for Next.js data URLs
         """
-        url = f"{self.BASE_URL}/products/type-ahead"
+        url = f"https://{self.domain}/en"
+        response = requests.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        })
+        response.raise_for_status()
 
-        today = datetime.now().strftime("%d%m%Y")
+        # Extract build ID from page HTML
+        match = re.search(r'buildId":"([^"]+)"', response.text)
+        if match:
+            return match.group(1)
+        raise ValueError("Could not extract build ID from website")
 
-        payload = {
-            "size": size,
+    def search_products(self, query: str, size: int = 48) -> dict:
+        """
+        Search for products and return full product details with codes
+
+        Args:
+            query: Search term (e.g., "milk", "ground beef")
+            size: Maximum number of results to return (default: 48)
+
+        Returns:
+            dict: Search results with products including articleNumber codes
+        """
+        # Get current build ID
+        build_id = self._get_build_id()
+
+        # Use Next.js data endpoint for search results
+        url = f"https://{self.domain}/_next/data/{build_id}/en/search.json"
+
+        params = {
+            "search-bar": query,
             "storeId": self.store_id,
-            "term": query,
-            "lang": "en",
-            "date": today,
-            "version": 1,
-            "banner": self.banner,
-            "offerType": "OG",
-            "displayCategoryFilters": False,
-            "cartId": self.cart_id,
+            "cartId": self.cart_id
         }
 
-        response = requests.post(url, headers=self._get_headers(), json=payload)
+        response = requests.get(url, params=params, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Accept": "application/json"
+        })
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract products from Next.js response structure
+        products = []
+        try:
+            page_props = data.get("pageProps", {})
+            search_data = page_props.get("initialSearchData", {})
+            layout = search_data.get("layout", {})
+            sections = layout.get("sections", {})
+            main_content = sections.get("mainContentCollection", {})
+
+            for component in main_content.get("components", []):
+                comp_data = component.get("data", {})
+                if "productTiles" in comp_data:
+                    tiles = comp_data["productTiles"]
+                    for tile in tiles[:size]:
+                        # Extract key product info
+                        description = tile.get("description") or ""
+                        product = {
+                            "code": tile.get("articleNumber"),
+                            "name": tile.get("title"),
+                            "brand": tile.get("brand"),
+                            "description": description.replace("<br/>", " ") if description else "",
+                            "price": tile.get("pricing", {}).get("price"),
+                            "packageSizing": tile.get("packageSizing"),
+                            "link": tile.get("link"),
+                            "offerType": tile.get("offerType"),
+                        }
+                        products.append(product)
+
+            return {
+                "query": query,
+                "totalResults": search_data.get("searchResultsCount", 0),
+                "products": products[:size]
+            }
+        except Exception as e:
+            logger.error(f"Error parsing search results: {e}")
+            return {
+                "query": query,
+                "totalResults": 0,
+                "products": [],
+                "error": str(e)
+            }
+
+    def get_product_details(self, product_code: str) -> dict:
+        """
+        Get detailed information about a specific product by its code
+
+        Args:
+            product_code: Product code (e.g., "20039684_EA")
+
+        Returns:
+            dict: Product details including name, price, availability, etc.
+        """
+        url = f"{self.BASE_URL}/products/{product_code}"
+
+        response = requests.get(url, headers=self._get_headers())
         response.raise_for_status()
         return response.json()
 
@@ -278,7 +354,7 @@ async def list_tools() -> list[Tool]:
             name="search_products",
             description=(
                 "Search for products by name or keyword. "
-                "Returns product suggestions and search results. "
+                "Returns full product details including product codes, names, brands, prices, and descriptions. "
                 "Use this to find products the user wants to add to cart."
             ),
             inputSchema={
@@ -290,11 +366,29 @@ async def list_tools() -> list[Tool]:
                     },
                     "limit": {
                         "type": "number",
-                        "description": "Maximum number of results (default: 7)",
-                        "default": 7
+                        "description": "Maximum number of results (default: 48)",
+                        "default": 48
                     }
                 },
                 "required": ["query"]
+            }
+        ),
+        Tool(
+            name="get_product_details",
+            description=(
+                "Get detailed information about a specific product by its code. "
+                "Use this after finding a product code from past orders. "
+                "Returns full product details including name, price, brand, and availability."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "product_code": {
+                        "type": "string",
+                        "description": "Product code (e.g., '20039684_EA', '21218152_EA')",
+                    }
+                },
+                "required": ["product_code"]
             }
         ),
         Tool(
@@ -385,6 +479,15 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             query = arguments["query"]
             limit = arguments.get("limit", 7)
             result = client.search_products(query, size=limit)
+
+            return [TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
+
+        elif name == "get_product_details":
+            product_code = arguments["product_code"]
+            result = client.get_product_details(product_code)
 
             return [TextContent(
                 type="text",
