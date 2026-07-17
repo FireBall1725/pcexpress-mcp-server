@@ -242,71 +242,54 @@ async with stdio_client(server_params) as (read, write):
 
 ## ⚠️ Known Limitations
 
-### 1. Token Expiration
+Access-token expiry and cart-id changes used to be the big ones. Both are solved now:
+the server refreshes its own tokens (rotating and persisting the single-use refresh
+token), and it reads the cart id from your profile at runtime. What's left:
 
-**Problem**: Bearer tokens expire after a few hours
+### 1. Product search reliability
 
-**Impact**: Server stops working when token expires
+**Problem**: Search goes through the banner website's Next.js route, which sits behind
+Akamai, so it can be flakier than the authenticated pcx-bff calls.
 
-**Workaround**: Re-extract credentials from browser session
+**Impact**: A search can occasionally fail even when the rest of the API is fine.
 
-**Status**: ❌ Not solved - Long-term authentication not yet implemented
+**Workaround**: Retry, or use past orders to find product codes.
 
-See [#1 - Implement automatic token refresh](https://github.com/YOUR_USERNAME/pcexpress-mcp-server/issues/1)
+**Status**: 🔍 The app's token-authenticated `/products/search` route is a candidate replacement.
 
-### 2. Product Search Limitations
+### 2. No official API
 
-**Problem**: Type-ahead search only returns category suggestions, not actual products
+**Problem**: This is a reverse-engineered, undocumented API. Loblaw can change it, or
+rotate the app client secret in a future release and break every copy at once.
 
-**Impact**: Can't directly get product codes for adding to cart
+**Impact**: Things can break without notice.
 
-**Workaround**: Use past orders to find product codes
+**Status**: ⚠️ Inherent to the approach.
 
-**Status**: 🔍 Investigating alternative endpoints
+### 3. Store-specific inventory
 
-### 3. Cart ID Changes
+**Problem**: Product availability and pricing vary by store and banner.
 
-**Problem**: Cart ID may change on logout/login
+**Workaround**: Set `PCEXPRESS_STORE_ID` to the store you want.
 
-**Impact**: Server needs cart ID updated
-
-**Workaround**: Re-extract credentials
-
-**Status**: ⚠️ Needs cart merging implementation
-
-### 4. No Official API
-
-**Problem**: Using reverse-engineered, undocumented API
-
-**Impact**: May break if Loblaws changes their API
-
-**Workaround**: Monitor for changes, update accordingly
-
-**Status**: ⚠️ Inherent limitation
-
-### 5. Store-Specific Inventory
-
-**Problem**: Product availability varies by store location
-
-**Impact**: Search results depend on selected store
-
-**Workaround**: Ensure correct `PCEXPRESS_STORE_ID` is set
-
-**Status**: ✅ Expected behavior
+**Status**: ✅ Expected behaviour.
 
 ## 🐛 Troubleshooting
 
-### "401 Unauthorized"
+### Auth error / "re-run login_pcid.py"
 
-**Cause**: Token expired or invalid
+**Cause**: The refresh token was consumed or revoked. Refresh tokens are single-use, so a
+shared token chain (two instances on one token) or a long idle period can break it.
 
-**Fix**: Re-extract credentials from browser
+**Fix**: Run `python login_pcid.py` (or `setup.py`) and update `PCEXPRESS_REFRESH_TOKEN`.
+A normal expired access token is refreshed automatically and needs nothing from you.
 
 ### "404 Not Found"
 
-**Cause**: Cart/Customer ID changed or wrong banner
+**Cause**: No orders or cart at that banner, or the wrong `PCEXPRESS_BANNER` code. Cart and
+customer ids are read from your profile, so a stale id isn't the cause.
 
-**Fix**: Verify `PCEXPRESS_BANNER` matches token source, re-extract IDs
+**Fix**: Check `PCEXPRESS_BANNER` is the banner you actually shop.
 
 ### "No products found"
 
