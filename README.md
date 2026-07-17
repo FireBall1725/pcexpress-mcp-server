@@ -7,6 +7,8 @@ Control your grocery cart with AI! This MCP server enables LLMs (like Claude) to
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
+> **How the auth was cracked:** the login sits behind Akamai bot detection, so the OAuth flow was reverse-engineered out of Loblaw's Android app. If you want the emulator-and-mitmproxy story behind `pcid_config.py`, read the write-up: [Reverse-engineering PC Express](https://fireball1725.ca/articles/reverse-engineering-pc-express-oauth-secret).
+
 ## ⚠️ Important Disclaimers
 
 - **Unofficial**: This project is NOT affiliated with, endorsed by, or supported by Loblaws Companies Limited, PC Express, or any related entities
@@ -92,45 +94,66 @@ Works with all PC Express enabled stores:
 
 ### Getting Your Credentials
 
-Since there's no public API, you need to extract credentials from your browser session:
+Authentication uses the PC Express app's OAuth flow. You sign in once in a real browser to
+get a refresh token; after that the server mints access tokens on its own and never needs
+another manual login. See [AUTH_NOTES.md](AUTH_NOTES.md) for how it works, and
+[DEPLOYMENT.md](DEPLOYMENT.md) for running it locally, in Docker, Home Assistant, or Kubernetes.
 
-#### Method 1: HAR File Export (Recommended)
+**Easiest:** run the setup wizard; it logs you in and writes the config for wherever you run it:
 
-1. Visit your banner's website (e.g., www.zehrs.ca)
-2. Log in to your account
-3. Open DevTools (F12) → **Network** tab
-4. ✅ Check "Preserve log"
-5. Clear network log
-6. Navigate to your cart and past orders
-7. Right-click in Network tab → **"Save all as HAR with content"**
-8. Run the credential extractor:
-   ```bash
-   python extract_credentials.py path/to/file.har
-   ```
+```bash
+python setup.py
+```
 
-This automatically creates your `.env` file!
+The manual steps below are the same thing, done by hand.
 
-#### Method 2: Manual Extraction
+#### One-time login
 
-See [SETUP.md](SETUP.md) for detailed manual extraction instructions.
+```bash
+python login_pcid.py
+```
+
+It opens your browser to the PC ID sign-in. After you log in, the page tries to open a
+`com.loblaw.pcx://...` link and shows an error; that is expected. Copy that full address
+from the address bar and paste it back into the script. It prints your `PCEXPRESS_REFRESH_TOKEN`.
+The app client secret is baked into the code, so you don't supply it.
+
+#### Automated login (optional, no paste)
+
+If you'd rather not paste anything, `login_pcid_auto.py` drives a browser for you:
+
+```bash
+pip install -r requirements-auto.txt && python -m playwright install chromium
+PCEXPRESS_CLIENT_SECRET=... PCEXPRESS_EMAIL=you@example.com PCEXPRESS_PASSWORD=... \
+    python login_pcid_auto.py
+```
+
+It logs in and prints the same two values. It runs a **headed** browser (Akamai blocks
+headless), so run it on a machine with a display, or under `xvfb-run` on a headless box.
+Accounts with 2FA can't be automated; use the manual `login_pcid.py` for those. Either way,
+the browser is used only for this one-time step; the server never runs a browser.
+
+Your cart id and customer id are read from your profile at runtime, so you don't set them.
 
 ### Environment Variables
 
 ```bash
-# OAuth Bearer Token (expires after a few hours)
-PCEXPRESS_BEARER_TOKEN=your_bearer_token_here
+# Refresh token from the one-time login above (server rotates/persists it after first use)
+PCEXPRESS_REFRESH_TOKEN=your_refresh_token_here
 
-# Your customer/user ID
-PCEXPRESS_CUSTOMER_ID=your_customer_id_here
+# Writable dir for the rotated token + cached access token; must persist across restarts
+PCEXPRESS_STATE_DIR=~/.pcexpress-mcp
 
-# Your active cart ID
-PCEXPRESS_CART_ID=your_cart_id_here
+# Banner: zehrs, loblaws, nofrills, superstore, independent, tandt
+PCEXPRESS_BANNER=zehrs
 
 # Store ID (4-digit code)
 PCEXPRESS_STORE_ID=your_store_id_here
 
-# Banner: zehrs, loblaws, nofrills, superstore, independent, tandt
-PCEXPRESS_BANNER=zehrs
+# Optional: cart id is auto-discovered; set only to force a specific cart.
+# PCEXPRESS_CART_ID=your_cart_id_here
+# Optional: the app client secret is baked in; set only to override it.
+# PCEXPRESS_CLIENT_SECRET=your_client_secret_here
 ```
 
 ## 🔌 Platform Integration
@@ -146,9 +169,8 @@ mcp:
       args:
         - /path/to/pcexpress_mcp_server.py
       env:
-        PCEXPRESS_BEARER_TOKEN: "your_token"
-        PCEXPRESS_CUSTOMER_ID: "your_id"
-        PCEXPRESS_CART_ID: "your_cart"
+        PCEXPRESS_REFRESH_TOKEN: "your_refresh_token"
+        PCEXPRESS_STATE_DIR: "/config/pcexpress-mcp"
         PCEXPRESS_STORE_ID: "your_store"
         PCEXPRESS_BANNER: "zehrs"
 ```
@@ -166,9 +188,8 @@ Edit your Claude Desktop config:
       "command": "python3",
       "args": ["/path/to/pcexpress_mcp_server.py"],
       "env": {
-        "PCEXPRESS_BEARER_TOKEN": "your_token",
-        "PCEXPRESS_CUSTOMER_ID": "your_id",
-        "PCEXPRESS_CART_ID": "your_cart",
+        "PCEXPRESS_REFRESH_TOKEN": "your_refresh_token",
+        "PCEXPRESS_STATE_DIR": "~/.pcexpress-mcp",
         "PCEXPRESS_STORE_ID": "your_store",
         "PCEXPRESS_BANNER": "zehrs"
       }
@@ -189,7 +210,7 @@ server_params = StdioServerParameters(
     command="python3",
     args=["pcexpress_mcp_server.py"],
     env={
-        "PCEXPRESS_BEARER_TOKEN": "your_token",
+        "PCEXPRESS_REFRESH_TOKEN": "your_refresh_token",
         # ... other env vars
     }
 )
@@ -210,10 +231,14 @@ async with stdio_client(server_params) as (read, write):
 ## 📚 Documentation
 
 - **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide
-- **[SETUP.md](SETUP.md)** - Detailed configuration instructions
+- **[SETUP.md](SETUP.md)** - Detailed configuration and login
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Local, Docker, Home Assistant, and Kubernetes
+- **[AUTH_NOTES.md](AUTH_NOTES.md)** - How the PC id auth flow works
+- **[API_REFERENCE.md](API_REFERENCE.md)** - The pcx-bff endpoints, params, and responses
 - **[BANNERS.md](BANNERS.md)** - Multi-banner usage guide
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical architecture details
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute
+- **[Reverse-engineering PC Express](https://fireball1725.ca/articles/reverse-engineering-pc-express-oauth-secret)** - The write-up on getting the OAuth secret out of the app
 
 ## ⚠️ Known Limitations
 
@@ -296,19 +321,24 @@ See [#1 - Implement automatic token refresh](https://github.com/YOUR_USERNAME/pc
 **Fix**:
 ```bash
 pip install -r requirements.txt
-python extract_credentials.py your_file.har
+# if the smoke test reports an auth error, your refresh token expired:
+python login_pcid.py
 ```
 
 See full troubleshooting guide in [SETUP.md](SETUP.md)
 
 ## 🗺️ Roadmap
 
-### High Priority
+### Done
 
-- [ ] Automatic token refresh (#1)
-- [ ] Full product search (not just type-ahead) (#2)
-- [ ] Cart ID change detection (#3)
-- [ ] Better error messages (#4)
+- [x] Automatic token refresh (no manual token copying)
+- [x] Cart id and customer id auto-discovery
+
+### Open
+
+- [ ] Token-authenticated product search (replace the website route)
+- [ ] Store id auto-discovery from `homeStore`
+- [ ] Better error messages
 
 ### Medium Priority
 

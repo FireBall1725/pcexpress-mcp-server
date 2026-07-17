@@ -1,6 +1,15 @@
 # Environment variables and secrets
 .env
 .env.local
+.venv/
+.pcexpress-mcp/
+pcid_token_state.json
+
+# Local test/capture artifacts (never commit — contain tokens/secrets)
+test_server.env
+app_creds.json
+pkce.json
+success_url.txt
 
 # Python
 __pycache__/
