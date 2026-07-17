@@ -1,123 +1,67 @@
 #!/usr/bin/env python3
-"""
-Test script for PC Express API
+"""Smoke test for the PC Express MCP server.
 
-Tests the basic API functionality without using MCP
-Works with all Loblaws banners (Zehrs, Loblaws, No Frills, Superstore, etc.)
+Exercises the real auth path (headless refresh) and a few read calls without going through
+MCP. Set PCEXPRESS_REFRESH_TOKEN (and PCEXPRESS_STATE_DIR / PCEXPRESS_BANNER) first, or run
+setup.py / login_pcid.py to get a refresh token.
 """
-
 import os
 import sys
 from pathlib import Path
 
-# Load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv()
 
-# Add current directory to path to import the server module
+load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pcexpress_mcp_server import PCExpressAPI
+from pcid_token import TokenManager, PcidAuthError
 
 
-def test_api():
-    """Test the PC Express API client"""
-
-    # Get credentials from environment
-    bearer_token = os.getenv("PCEXPRESS_BEARER_TOKEN")
-    customer_id = os.getenv("PCEXPRESS_CUSTOMER_ID")
-    cart_id = os.getenv("PCEXPRESS_CART_ID")
-    store_id = os.getenv("PCEXPRESS_STORE_ID", "1234")
+def main():
     banner = os.getenv("PCEXPRESS_BANNER", "zehrs")
+    store_id = os.getenv("PCEXPRESS_STORE_ID", "1234")
 
-    if not all([bearer_token, customer_id, cart_id]):
-        print("❌ Missing credentials in .env file")
-        print("\nRequired environment variables:")
-        print("  - PCEXPRESS_BEARER_TOKEN")
-        print("  - PCEXPRESS_CUSTOMER_ID")
-        print("  - PCEXPRESS_CART_ID")
+    print("=" * 60)
+    print("PC Express API smoke test")
+    print("=" * 60)
+
+    try:
+        tokens = TokenManager()
+        access = tokens.get_access_token(force=True)
+    except PcidAuthError as e:
+        print(f"❌ Auth failed: {e}")
+        sys.exit(1)
+    print(f"✅ Minted an access token headlessly ({len(access)} chars)")
+
+    api = PCExpressAPI(tokens, cart_id=None, store_id=store_id, banner=banner)
+
+    print("\n[1] Customer profile")
+    try:
+        cust = api.get_customer()
+        print(f"✅ {cust.get('firstName')} {cust.get('lastName')}  cartId={cust.get('cartId')}")
+    except Exception as e:
+        print(f"❌ {e}")
         sys.exit(1)
 
-    if bearer_token == "YOUR_TOKEN_HERE":
-        print("❌ Please update .env file with your actual bearer token")
-        print("\nYou can get it from the curl command you shared earlier:")
-        print("  Authorization: Bearer <YOUR_TOKEN>")
-        sys.exit(1)
-
-    print("="*60)
-    print("Testing PC Express API Client")
-    print("="*60)
-    print(f"\nBanner: {banner}")
-    print(f"Customer ID: {customer_id}")
-    print(f"Cart ID: {cart_id}")
-    print(f"Store ID: {store_id}")
-    print(f"Token: {bearer_token[:30]}...{bearer_token[-20:]}")
-    print()
-
-    # Initialize API client
-    api = PCExpressAPI(bearer_token, customer_id, cart_id, store_id, banner)
-
-    # Test 1: Get historical orders
-    print("\n" + "="*60)
-    print("TEST 1: Get Historical Orders")
-    print("="*60)
+    print("\n[2] Past orders")
     try:
         orders = api.get_historical_orders()
-        print(f"✅ Success! Found {orders.get('onlineOrdersCount', 0)} online orders")
-
-        if orders.get('orderHistory'):
-            print("\nMost recent orders:")
-            for i, order in enumerate(orders['orderHistory'][:3], 1):
-                print(f"  {i}. Order {order['id']} - ${order['total']:.2f} on {order['placed'][:10]}")
+        print(f"✅ onlineOrdersCount={orders.get('onlineOrdersCount')} "
+              f"returned={len(orders.get('orderHistory', []))}")
     except Exception as e:
-        print(f"❌ Failed: {e}")
-        return False
+        print(f"❌ {e}")
 
-    # Test 2: Search for products
-    print("\n" + "="*60)
-    print("TEST 2: Search Products (query: 'ice cream')")
-    print("="*60)
-    try:
-        results = api.search_products("ice cream", size=5)
-        print(f"✅ Success! Found {len(results)} suggestions")
-
-        if results:
-            print("\nSuggestions:")
-            for i, item in enumerate(results, 1):
-                print(f"  {i}. {item.get('suggestion', item)}")
-    except Exception as e:
-        print(f"❌ Failed: {e}")
-        return False
-
-    # Test 3: Get cart
-    print("\n" + "="*60)
-    print("TEST 3: View Cart")
-    print("="*60)
+    print("\n[3] Cart (auto-discovered id)")
     try:
         cart = api.get_cart()
-        print(f"✅ Success! Cart ID: {cart.get('code', 'N/A')}")
-
-        entries = cart.get('entries', [])
-        if entries:
-            print(f"\nCart has {len(entries)} items:")
-            for entry in entries[:5]:
-                product = entry.get('product', {})
-                print(f"  - {product.get('name', 'Unknown')} x{entry.get('quantity', 0)}")
-        else:
-            print("\nCart is empty")
+        orders_in_cart = cart.get("orders") or []
+        print(f"✅ cart id={cart.get('id')} status={cart.get('status')} order-groups={len(orders_in_cart)}")
     except Exception as e:
-        print(f"❌ Failed: {e}")
-        return False
+        print(f"❌ {e}")
 
-    print("\n" + "="*60)
-    print("✅ All tests passed!")
-    print("="*60)
-    print("\nYour API credentials are working correctly.")
-    print("You can now run the MCP server with:")
-    print("  python pcexpress_mcp_server.py")
-
-    return True
+    print("\n✅ Done. Run the server with:  python pcexpress_mcp_server.py")
 
 
 if __name__ == "__main__":
-    test_api()
+    main()

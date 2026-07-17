@@ -1,470 +1,108 @@
-# Zehrs MCP Server - Architecture
+# Architecture
 
-## System Overview
+The server exposes a handful of MCP tools over stdio, translates each tool call into a
+`api.pcexpress.ca/pcx-bff` request, and keeps itself authenticated against PC id without a
+browser. This document describes how the pieces fit. For the login internals see
+[AUTH_NOTES.md](AUTH_NOTES.md); for the endpoints see [API_REFERENCE.md](API_REFERENCE.md).
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      User Interface Layer                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────────┐         ┌──────────────┐                │
-│  │ Home         │         │ Claude       │                │
-│  │ Assistant    │         │ Desktop      │                │
-│  │ Voice AI     │         │ App          │                │
-│  └──────┬───────┘         └──────┬───────┘                │
-│         │                        │                        │
-│         └────────────┬───────────┘                        │
-└──────────────────────┼────────────────────────────────────┘
-                       │ MCP Protocol (stdio)
-                       │
-┌──────────────────────▼────────────────────────────────────┐
-│              Zehrs MCP Server (Python)                    │
-├───────────────────────────────────────────────────────────┤
-│                                                           │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │            MCP Protocol Handler                  │    │
-│  │  • list_tools() - Advertise 6 tools             │    │
-│  │  • call_tool() - Execute tool requests          │    │
-│  │  • stdio_server() - Stdin/stdout transport      │    │
-│  └────────────────────┬─────────────────────────────┘    │
-│                       │                                   │
-│  ┌────────────────────▼─────────────────────────────┐    │
-│  │             ZehrsAPI Client                      │    │
-│  │  • get_historical_orders()                       │    │
-│  │  • get_order_details(order_id)                   │    │
-│  │  • search_products(query)                        │    │
-│  │  • add_to_cart(product_code, qty)                │    │
-│  │  • remove_from_cart(product_code)                │    │
-│  │  • get_cart()                                    │    │
-│  └────────────────────┬─────────────────────────────┘    │
-│                       │                                   │
-│  ┌────────────────────▼─────────────────────────────┐    │
-│  │          Authentication & Headers                │    │
-│  │  • Bearer Token (OAuth JWT)                      │    │
-│  │  • Static API Key                                │    │
-│  │  • Site Banner: zehrs                            │    │
-│  │  • Tenant ID: ONLINE_GROCERIES                   │    │
-│  └──────────────────────────────────────────────────┘    │
-│                                                           │
-└──────────────────────┬────────────────────────────────────┘
-                       │ HTTPS REST API
-                       │
-┌──────────────────────▼────────────────────────────────────┐
-│              api.pcexpress.ca                             │
-│              (PC Express Backend)                         │
-├───────────────────────────────────────────────────────────┤
-│                                                           │
-│  /pcx-bff/api/v1/                                        │
-│    ├── ecommerce/v2/zehrs/customers/                     │
-│    │   ├── historical-orders          [GET]             │
-│    │   └── historical-orders/{id}     [GET]             │
-│    │                                                     │
-│    ├── products/                                         │
-│    │   └── type-ahead                 [POST]            │
-│    │                                                     │
-│    └── carts/{cartId}                                    │
-│        ├── (get cart)                 [GET]             │
-│        └── ?inventory=true            [POST]            │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
-```
-
-## Data Flow Examples
-
-### Example 1: "Add ice cream to my cart"
+## Layers
 
 ```
-1. User speaks to Home Assistant
-   │
-   ▼
-2. Voice → Text conversion
-   "Add ice cream to my cart"
-   │
-   ▼
-3. LLM processes request → Decides to search products
-   │
-   ▼
-4. MCP Tool Call: search_products
-   {
-     "query": "ice cream",
-     "limit": 7
-   }
-   │
-   ▼
-5. ZehrsAPI.search_products("ice cream")
-   │
-   ▼
-6. POST https://api.pcexpress.ca/.../products/type-ahead
-   Headers: {
-     Authorization: Bearer eyJ...,
-     x-apikey: C1xujS...,
-     Site-Banner: zehrs
-   }
-   Body: {
-     "term": "ice cream",
-     "storeId": "1234",
-     "size": 7
-   }
-   │
-   ▼
-7. Response: [
-     {"suggestion": "Ice Cream"},
-     {"suggestion": "Ice Cream Bars"},
-     ...
-   ]
-   │
-   ▼
-8. LLM also calls: search_past_orders
-   to find what user bought before
-   │
-   ▼
-9. LLM combines results and asks:
-   "You've bought Chapman's Vanilla 2L before. Add it?"
-   │
-   ▼
-10. User confirms "Yes"
-   │
-   ▼
-11. MCP Tool Call: add_to_cart
-   {
-     "product_code": "21657456_EA",
-     "quantity": 1
-   }
-   │
-   ▼
-12. POST https://api.pcexpress.ca/.../carts/{id}?inventory=true
-   Body: {
-     "entries": {
-       "21657456_EA": {
-         "quantity": 1,
-         "fulfillmentMethod": "pickup",
-         "sellerId": "1234"
-       }
-     }
-   }
-   │
-   ▼
-13. Response: {updated cart data}
-   │
-   ▼
-14. LLM confirms: "Added Chapman's Vanilla Ice Cream to your cart!"
+MCP client (Claude Desktop, Home Assistant)
+        │  MCP over stdio
+        ▼
+pcexpress_mcp_server.py
+  ├── MCP handlers: list_tools(), call_tool()
+  ├── PCExpressAPI: one method per tool, builds and sends the HTTP request
+  └── TokenManager: mints/rotates PC id access tokens
+        │  HTTPS
+        ▼
+api.pcexpress.ca/pcx-bff/api/v1     accounts.pcid.ca/oauth2/v1
+  (grocery data)                    (token endpoint)
 ```
 
-## Authentication Flow
+## Components
 
-```
-┌──────────────┐
-│   Browser    │
-│  (User)      │
-└──────┬───────┘
-       │ 1. Navigate to zehrs.ca
-       │
-       ▼
-┌──────────────┐
-│  Zehrs Web   │
-│  Frontend    │
-└──────┬───────┘
-       │ 2. Redirect to login
-       │
-       ▼
-┌─────────────────────────┐
-│  Oracle Identity Cloud  │
-│  (accounts.pcid.ca)     │
-└──────┬──────────────────┘
-       │ 3. OAuth 2.0 flow
-       │    - Authorization code
-       │    - PKCE challenge
-       │
-       ▼
-┌──────────────┐
-│   Browser    │
-│  (receives)  │
-│  JWT token   │
-└──────┬───────┘
-       │ 4. Extract from DevTools
-       │    Authorization: Bearer eyJ...
-       │
-       ▼
-┌──────────────┐
-│   .env       │
-│   file       │
-│  BEARER_     │
-│  TOKEN=...   │
-└──────┬───────┘
-       │ 5. Used by MCP server
-       │
-       ▼
-┌──────────────┐
-│  All API     │
-│  requests    │
-│  include     │
-│  this token  │
-└──────────────┘
-```
+**pcexpress_mcp_server.py** implements the MCP protocol, registers the tools, routes each
+call to a `PCExpressAPI` method, and handles errors. It loads configuration from the
+environment (and a `.env` file if present).
 
-## MCP Tools Architecture
+**PCExpressAPI** builds each request, injects the auth and banner headers, and parses the
+response. Its `_request()` wrapper retries once on an HTTP 401 after forcing a token refresh,
+so an access token expiring mid-session is invisible to the caller. It holds the banner, the
+store id, and a lazily-resolved cart id. `customerId` and `cartId` are read from the customer
+profile the first time they're needed, so neither is configured by hand.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   MCP Tools (6)                     │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│  ┌──────────────────────────────────────────┐     │
-│  │ search_past_orders                       │     │
-│  │  Input: { limit?: number }               │     │
-│  │  Output: List of past orders             │     │
-│  │  API: GET /historical-orders             │     │
-│  └──────────────────────────────────────────┘     │
-│                                                     │
-│  ┌──────────────────────────────────────────┐     │
-│  │ get_order_items                          │     │
-│  │  Input: { order_id: string }             │     │
-│  │  Output: Order details with items        │     │
-│  │  API: GET /historical-orders/{id}        │     │
-│  └──────────────────────────────────────────┘     │
-│                                                     │
-│  ┌──────────────────────────────────────────┐     │
-│  │ search_products                          │     │
-│  │  Input: { query: string, limit?: num }   │     │
-│  │  Output: Product suggestions             │     │
-│  │  API: POST /products/type-ahead          │     │
-│  └──────────────────────────────────────────┘     │
-│                                                     │
-│  ┌──────────────────────────────────────────┐     │
-│  │ add_to_cart                              │     │
-│  │  Input: { product_code, quantity, ... }  │     │
-│  │  Output: Updated cart                    │     │
-│  │  API: POST /carts/{id}?inventory=true    │     │
-│  └──────────────────────────────────────────┘     │
-│                                                     │
-│  ┌──────────────────────────────────────────┐     │
-│  │ remove_from_cart                         │     │
-│  │  Input: { product_code: string }         │     │
-│  │  Output: Updated cart                    │     │
-│  │  API: POST /carts/{id} (qty=0)           │     │
-│  └──────────────────────────────────────────┘     │
-│                                                     │
-│  ┌──────────────────────────────────────────┐     │
-│  │ view_cart                                │     │
-│  │  Input: {}                               │     │
-│  │  Output: Current cart contents           │     │
-│  │  API: GET /carts/{id}                    │     │
-│  └──────────────────────────────────────────┘     │
-│                                                     │
-└─────────────────────────────────────────────────────┘
-```
+**TokenManager** (`pcid_token.py`) owns authentication. It reads the refresh token from the
+state file, or from `PCEXPRESS_REFRESH_TOKEN` on first run, exchanges it for an access token
+at `accounts.pcid.ca/oauth2/v1/token`, caches that token until 60 seconds before it expires,
+and writes the rotated refresh token back to `PCEXPRESS_STATE_DIR`. If the exchange fails with
+`invalid_grant`, it raises a `PcidAuthError` that tells the user to run the login again.
 
-## Component Responsibilities
+**pcid_config.py** holds the fixed app OAuth constants: `client_id`, the baked `client_secret`
+(overridable by env or a local file), the endpoints, the scope, and the redirect uri.
 
-### zehrs_mcp_server.py (Main Server)
-**Responsibilities:**
-- MCP protocol implementation
-- Tool registration and discovery
-- Tool invocation routing
-- Error handling and logging
-- Environment variable loading
+**login_pcid.py / login_pcid_auto.py / setup.py** run the one-time browser login that produces
+the first refresh token. They're used once, on a machine with a display, and never at server
+runtime.
 
-**Key Classes:**
-- `Server` - MCP server instance
-- `ZehrsAPI` - API client wrapper
+## Authentication flow
 
-**Key Functions:**
-- `list_tools()` - Returns available tools
-- `call_tool()` - Routes tool calls to API methods
-- `main()` - Server lifecycle management
+There are two phases, and they run in different places.
 
-### ZehrsAPI Class (API Client)
-**Responsibilities:**
-- HTTP request construction
-- Authentication header injection
-- API endpoint abstraction
-- Response parsing
-- Error propagation
+The login happens once, in a real browser. The user signs into PC id, the browser is
+redirected to `com.loblaw.pcx://pcx-android/login/appredirect?code=...`, and the helper
+exchanges that code (with the PKCE verifier and the client secret) for a refresh token. A real
+browser is required here because the PC id login page is behind Akamai bot detection, which
+blocks a scripted or headless login.
 
-**State:**
-- `bearer_token` - User session token
-- `customer_id` - User identifier
-- `cart_id` - Active shopping cart
-- `store_id` - Selected store location
-- `banner` - Store banner (zehrs)
+Everything after runs headless. The `TokenManager` posts the refresh token to the token
+endpoint and gets back an access token good for 3600 seconds. That endpoint isn't bot-walled,
+so ordinary Python reaches it. Because PC id refresh tokens are single-use, each refresh
+returns a new refresh token and kills the old one; the manager persists the new one so a
+restart continues the chain. Only one instance may run per chain.
 
-### extract_credentials.py (Utility)
-**Responsibilities:**
-- HAR file parsing
-- Credential extraction
-- .env file generation
-- User guidance
+## Tools
 
-**Extracted Data:**
-- Bearer token from Authorization headers
-- Customer ID from URL patterns
-- Cart ID from URL patterns
-- Store ID from request bodies
+Six tools, each a thin wrapper over one request:
 
-### test_api.py (Testing)
-**Responsibilities:**
-- Credential validation
-- API endpoint testing
-- Integration verification
-- User feedback
+- `search_past_orders` -> `GET /ecommerce/v2/{banner}/customers/historical-orders`
+- `get_order_items` -> `GET /ecommerce/v2/{banner}/customers/historical-orders/{orderId}`
+- `search_products` -> the banner website's Next.js search route (see API_REFERENCE.md)
+- `get_product_details` -> `GET /products/{productCode}`
+- `add_to_cart` and `remove_from_cart` -> `POST /carts/{cartId}?inventory=true`
+- `view_cart` -> `GET /carts/{cartId}`
 
-## Configuration Management
+## Configuration
 
-```
-┌─────────────────────────────────────────────┐
-│          Configuration Sources              │
-├─────────────────────────────────────────────┤
-│                                             │
-│  .env file (primary)                        │
-│  ├── ZEHRS_BEARER_TOKEN                     │
-│  ├── ZEHRS_CUSTOMER_ID                      │
-│  ├── ZEHRS_CART_ID                          │
-│  └── ZEHRS_STORE_ID                         │
-│                                             │
-│  Environment Variables (override)           │
-│  └── Same keys as .env                      │
-│                                             │
-│  Hardcoded Defaults                         │
-│  ├── API_KEY (static from HAR analysis)     │
-│  ├── BASE_URL                               │
-│  ├── BANNER = "zehrs"                       │
-│  └── Default store = "1234"                 │
-│                                             │
-└─────────────────────────────────────────────┘
-```
+The server reads these environment variables (also loadable from `.env`):
+`PCEXPRESS_REFRESH_TOKEN`, `PCEXPRESS_STATE_DIR`, `PCEXPRESS_BANNER`, `PCEXPRESS_STORE_ID`,
+`PCEXPRESS_CART_ID` (optional, auto-discovered), and `PCEXPRESS_CLIENT_SECRET` (optional,
+baked default). The static web apikey `C1xujSegT5j3ap3yexJjqhOfELwGKYvz` and the base url are
+constants in the code. See [SETUP.md](SETUP.md) for the full table.
 
-## Error Handling Strategy
+## Error handling
 
-```
-┌─────────────────────────────────────────────┐
-│              Error Types                    │
-├─────────────────────────────────────────────┤
-│                                             │
-│  Authentication Errors (401)                │
-│  → Token expired                            │
-│  → Return: "Token expired, please refresh"  │
-│                                             │
-│  Not Found (404)                            │
-│  → Cart/Order doesn't exist                 │
-│  → Return: Specific error message           │
-│                                             │
-│  Validation Errors (400)                    │
-│  → Invalid product code                     │
-│  → Invalid quantity                         │
-│  → Return: Validation details               │
-│                                             │
-│  Network Errors                             │
-│  → Connection timeout                       │
-│  → DNS failure                              │
-│  → Return: Network error message            │
-│                                             │
-│  Server Errors (500)                        │
-│  → Zehrs backend issues                     │
-│  → Return: "Service unavailable"            │
-│                                             │
-└─────────────────────────────────────────────┘
-```
+- HTTP 401: the `_request()` wrapper forces one token refresh and retries. If it still fails,
+  the error propagates.
+- Token refresh failure (`invalid_grant`): a `PcidAuthError` asks the user to re-run the login.
+- HTTP 400 on a cart list: the call needs `?banner=`; the server always sends it.
+- Other 4xx/5xx and network errors: raised as the underlying `requests` exception, returned to
+  the MCP client as an error string.
 
-## Security Architecture
+## Security
 
-```
-┌─────────────────────────────────────────────┐
-│           Security Layers                   │
-├─────────────────────────────────────────────┤
-│                                             │
-│  1. Credential Storage                      │
-│     • .env file (not in git)                │
-│     • File permissions: 600                 │
-│     • No credentials in code                │
-│                                             │
-│  2. Transport Security                      │
-│     • HTTPS only                            │
-│     • TLS 1.2+                              │
-│     • Certificate validation                │
-│                                             │
-│  3. Authentication                          │
-│     • OAuth 2.0 Bearer tokens               │
-│     • Short-lived tokens (hours)            │
-│     • No password storage                   │
-│                                             │
-│  4. API Keys                                │
-│     • Static API key (extracted)            │
-│     • Per-request injection                 │
-│     • Not user-specific                     │
-│                                             │
-│  5. Input Validation                        │
-│     • Type checking                         │
-│     • Required field validation             │
-│     • Format validation                     │
-│                                             │
-└─────────────────────────────────────────────┘
-```
+Only the refresh token is personal, and it never enters git; the `.gitignore` excludes `.env`,
+the state directory, and the token files, and the state file is written mode 600. The
+`client_id` and `client_secret` are the app's own shared credentials, not tied to any account.
+No password is stored: the automatic login reads email and password from the environment for
+the one-time browser step and keeps nothing.
 
-## Scalability Considerations
+## Limits and future work
 
-### Current Limitations
-- **Single User:** One token = one user
-- **Single Store:** Hardcoded store ID
-- **No Caching:** Every request hits API
-- **Synchronous:** Blocking I/O
-
-### Future Enhancements
-- **Multi-User:** Token per user
-- **Store Selection:** Dynamic store picking
-- **Caching:** Redis for order history
-- **Async:** AsyncIO for concurrent requests
-- **Rate Limiting:** Respect API limits
-- **Connection Pooling:** Reuse HTTP connections
-
-## Deployment Options
-
-### Option 1: Local Process
-```
-Home Assistant → spawns → python zehrs_mcp_server.py
-```
-
-### Option 2: System Service
-```
-systemd service → runs continuously → accepts MCP connections
-```
-
-### Option 3: Docker Container
-```
-Docker container → isolated environment → managed lifecycle
-```
-
-### Option 4: Cloud Function
-```
-AWS Lambda / GCP Function → serverless → on-demand execution
-```
-
-## Monitoring & Observability
-
-```
-┌─────────────────────────────────────────────┐
-│          Observability Strategy             │
-├─────────────────────────────────────────────┤
-│                                             │
-│  Logging (Python logging module)            │
-│  • INFO: Tool calls, API requests           │
-│  • ERROR: API failures, auth issues         │
-│  • DEBUG: Request/response details          │
-│                                             │
-│  Metrics (Future)                           │
-│  • Request count per tool                   │
-│  • API latency                              │
-│  • Error rate                               │
-│  • Token refresh frequency                  │
-│                                             │
-│  Health Checks (Future)                     │
-│  • Token validity                           │
-│  • API connectivity                         │
-│  • Cart accessibility                       │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
----
-
-**Architecture Status:** ✅ Implemented and documented
-**Last Updated:** February 8, 2026
+The server serves one account per token chain and does one store at a time. It reads data and
+edits the cart; it does not place orders. `homeStore` in the customer profile means the store
+id could be auto-discovered the same way the cart id already is. The website-based product
+search could move to the app's token-authenticated `/products/search` route for reliability.
+Redis caching, async I/O, and connection pooling are open if throughput ever matters, which for
+a personal grocery account it doesn't.

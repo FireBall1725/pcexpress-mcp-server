@@ -1,0 +1,74 @@
+# PC Express MCP in Kubernetes.
+#
+# Two auth-specific rules that matter here:
+#   1. replicas: 1 — the refresh token is single-use; two pods would knock each other out.
+#   2. A PVC mounted at PCEXPRESS_STATE_DIR holds the rotating refresh token. Without a
+#      persistent volume, a pod restart loses the rotated token and the seed in the Secret
+#      is already spent -> you'd have to re-run setup. This PVC is the load-bearing piece.
+#
+# The MCP server speaks stdio. To expose it on the network (so Home Assistant / clients can
+# reach it), it's wrapped with supergateway (stdio -> SSE), same pattern as other MCPs.
+# Build an image with both node+supergateway and this app, or adjust the command to your setup.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pcexpress-mcp-state
+  namespace: app-pcexpress
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 32Mi
+  # storageClassName: longhorn
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcexpress-mcp
+  namespace: app-pcexpress
+spec:
+  replicas: 1              # do not scale — single-use refresh token
+  strategy:
+    type: Recreate         # never run two pods against the same token chain
+  selector:
+    matchLabels:
+      app: pcexpress-mcp
+  template:
+    metadata:
+      labels:
+        app: pcexpress-mcp
+    spec:
+      containers:
+        - name: pcexpress-mcp
+          image: ghcr.io/fireball1725/pcexpress-mcp:latest   # your built image
+          # Expose the stdio server over SSE via supergateway:
+          command: ["npx", "-y", "supergateway"]
+          args: ["--stdio", "python pcexpress_mcp_server.py", "--port", "8000", "--outputTransport", "sse"]
+          env:
+            - name: PCEXPRESS_STATE_DIR
+              value: /data
+          envFrom:
+            - secretRef:
+                name: pcexpress-mcp
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: state
+              mountPath: /data
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: pcexpress-mcp-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pcexpress-mcp
+  namespace: app-pcexpress
+spec:
+  selector:
+    app: pcexpress-mcp
+  ports:
+    - port: 80
+      targetPort: 8000

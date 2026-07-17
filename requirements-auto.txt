@@ -1,0 +1,5 @@
+# Optional: only needed for automated login (login_pcid_auto.py).
+# The MCP server itself does NOT need these — it refreshes with plain HTTPS.
+# After installing, run: python -m playwright install chromium
+playwright>=1.40.0
+playwright-stealth>=1.0.6

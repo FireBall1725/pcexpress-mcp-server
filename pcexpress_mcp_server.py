@@ -26,9 +26,15 @@ from typing import Any, Optional
 from datetime import datetime
 
 import requests
+from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+from pcid_token import TokenManager, PcidAuthError
+
+# Load .env if present (no-op when the launcher passes env directly)
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,9 +45,8 @@ class PCExpressAPI:
     """Wrapper for PC Express API (works across all Loblaws banners)"""
 
     BASE_URL = "https://api.pcexpress.ca/pcx-bff/api/v1"
-    AUTH_URL = "https://accounts.pcid.ca/oauth2/v1/token"
 
-    # Static API key extracted from HAR file
+    # Static web API key (not user-specific). PCID auth lives in pcid_token/pcid_config.
     API_KEY = "C1xujSegT5j3ap3yexJjqhOfELwGKYvz"
 
     # Banner to website mapping
@@ -54,30 +59,43 @@ class PCExpressAPI:
         "tandt": "www.tntsupermarket.com",
     }
 
-    def __init__(self, bearer_token: str, customer_id: str, cart_id: str, store_id: str = "1234", banner: str = "zehrs"):
+    def __init__(self, token_manager: TokenManager, cart_id: str, store_id: str = "1234", banner: str = "zehrs"):
         """
         Initialize PCExpressAPI client
 
         Args:
-            bearer_token: OAuth bearer token from login
-            customer_id: Customer/user ID
+            token_manager: mints/refreshes PCID access tokens on demand
             cart_id: Active cart ID
             store_id: Store ID (4-digit code for your preferred store)
             banner: Store banner (zehrs, loblaws, nofrills, superstore, independent, tandt)
         """
-        self.bearer_token = bearer_token
-        self.customer_id = customer_id
-        self.cart_id = cart_id
+        self.tokens = token_manager
+        self._cart_id = cart_id
         self.store_id = store_id
         self.banner = banner.lower()
         self.domain = self.BANNER_DOMAINS.get(self.banner, "www.zehrs.ca")
+        self.session = requests.Session()
+
+    @property
+    def cart_id(self) -> str:
+        """The active cart id. Auto-discovered from the customer profile if not provided."""
+        if not self._cart_id:
+            self._cart_id = self.get_customer().get("cartId")
+            if not self._cart_id:
+                raise ValueError("No active cart found. Add an item to your cart, then retry.")
+        return self._cart_id
+
+    def get_customer(self) -> dict:
+        """Customer profile: cartId, customerId, name, postalCode, PC Optimum status, etc."""
+        url = f"{self.BASE_URL}/ecommerce/v2/{self.banner}/customers"
+        return self._request("GET", url).json()
 
     def _get_headers(self) -> dict:
-        """Get standard headers for API requests"""
+        """Get standard headers for API requests (fresh bearer each call)"""
         return {
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en",
-            "Authorization": f"Bearer {self.bearer_token}",
+            "Authorization": f"Bearer {self.tokens.get_access_token()}",
             "Business-User-Agent": "PCXWEB",
             "Content-Type": "application/json",
             "Origin": f"https://{self.domain}",
@@ -90,6 +108,16 @@ class PCExpressAPI:
             "is-helios-account": "true",
         }
 
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Authenticated request with one transparent refresh-and-retry on 401."""
+        headers = self._get_headers()
+        resp = self.session.request(method, url, headers=headers, **kwargs)
+        if resp.status_code == 401:
+            headers["Authorization"] = f"Bearer {self.tokens.get_access_token(force=True)}"
+            resp = self.session.request(method, url, headers=headers, **kwargs)
+        resp.raise_for_status()
+        return resp
+
     def get_historical_orders(self) -> dict:
         """
         Get list of past orders
@@ -99,9 +127,7 @@ class PCExpressAPI:
         """
         url = f"{self.BASE_URL}/ecommerce/v2/{self.banner}/customers/historical-orders"
 
-        response = requests.get(url, headers=self._get_headers())
-        response.raise_for_status()
-        return response.json()
+        return self._request("GET", url).json()
 
     def get_order_details(self, order_id: str) -> dict:
         """
@@ -115,9 +141,7 @@ class PCExpressAPI:
         """
         url = f"{self.BASE_URL}/ecommerce/v2/{self.banner}/customers/historical-orders/{order_id}"
 
-        response = requests.get(url, headers=self._get_headers())
-        response.raise_for_status()
-        return response.json()
+        return self._request("GET", url).json()
 
     def _get_build_id(self) -> str:
         """
@@ -222,9 +246,7 @@ class PCExpressAPI:
         """
         url = f"{self.BASE_URL}/products/{product_code}"
 
-        response = requests.get(url, headers=self._get_headers())
-        response.raise_for_status()
-        return response.json()
+        return self._request("GET", url).json()
 
     def get_cart(self) -> dict:
         """
@@ -235,9 +257,7 @@ class PCExpressAPI:
         """
         url = f"{self.BASE_URL}/carts/{self.cart_id}"
 
-        response = requests.get(url, headers=self._get_headers())
-        response.raise_for_status()
-        return response.json()
+        return self._request("GET", url).json()
 
     def add_to_cart(self, product_code: str, quantity: int = 1, fulfillment_method: str = "pickup") -> dict:
         """
@@ -263,9 +283,7 @@ class PCExpressAPI:
             }
         }
 
-        response = requests.post(url, headers=self._get_headers(), json=payload)
-        response.raise_for_status()
-        return response.json()
+        return self._request("POST", url, json=payload).json()
 
     def remove_from_cart(self, product_code: str) -> dict:
         """
@@ -292,20 +310,14 @@ def get_api_client() -> PCExpressAPI:
     global api_client
 
     if api_client is None:
-        # Load credentials from environment or config file
-        bearer_token = os.getenv("PCEXPRESS_BEARER_TOKEN")
-        customer_id = os.getenv("PCEXPRESS_CUSTOMER_ID")
+        # cart_id is optional — auto-discovered from the customer profile when omitted.
         cart_id = os.getenv("PCEXPRESS_CART_ID")
         store_id = os.getenv("PCEXPRESS_STORE_ID", "1234")
         banner = os.getenv("PCEXPRESS_BANNER", "zehrs")
 
-        if not all([bearer_token, customer_id, cart_id]):
-            raise ValueError(
-                "Missing required credentials. Set environment variables: "
-                "PCEXPRESS_BEARER_TOKEN, PCEXPRESS_CUSTOMER_ID, PCEXPRESS_CART_ID"
-            )
-
-        api_client = PCExpressAPI(bearer_token, customer_id, cart_id, store_id, banner)
+        # TokenManager mints/refreshes access tokens from the stored refresh token.
+        token_manager = TokenManager()
+        api_client = PCExpressAPI(token_manager, cart_id, store_id, banner)
 
     return api_client
 

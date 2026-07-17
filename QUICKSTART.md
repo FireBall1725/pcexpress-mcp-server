@@ -1,214 +1,94 @@
-# Quick Start Guide - 5 Minutes to Grocery Shopping AI
+# Quick start
 
-## Step 1: Install Dependencies (30 seconds)
+Five steps, and the only manual part is one browser login. After that the server keeps
+itself authenticated with no further copying of tokens.
+
+## 1. Install
 
 ```bash
-cd /Users/areed/temp/zehrs
 pip install -r requirements.txt
+# optional, for the automatic login below:
+pip install -r requirements-auto.txt && python -m playwright install chromium
 ```
 
-## Step 2: Add Your Bearer Token (1 minute)
-
-From your earlier curl command, you have this token:
-```
-eyJ4NXQjUzI1NiI6InFsakhobXpIS0prMm5uN2F2bHNqVGp4cHJVR0hFQ1h1MXdIUHEwVk94SW8i...
-```
-
-Edit `.env` file and replace `YOUR_TOKEN_HERE` with your actual token:
+## 2. Log in once and write your config
 
 ```bash
-# Option 1: Use a text editor
-nano .env
-
-# Option 2: Use sed (be careful with special chars in token!)
-# sed -i '' 's/YOUR_TOKEN_HERE/your_actual_token_here/' .env
+python setup.py
 ```
 
-Your `.env` should look like:
-```env
-ZEHRS_BEARER_TOKEN=eyJ4NXQjUzI1NiI6InFsakhobXpIS0prMm5uN2F2bHNqVGp4cHJVR0hFQ1h1MXdIUHEwVk94SW8i...
-ZEHRS_CUSTOMER_ID=your_customer_id_here
-ZEHRS_CART_ID=your_cart_id_here
-ZEHRS_STORE_ID=1234
-```
+The wizard signs you into PC id (automatically with your email and password, or manually in
+a browser), asks where you'll run the server, and writes the config for that target. It
+prints or writes a `PCEXPRESS_REFRESH_TOKEN`. That token is the only credential you handle,
+and it's tied to your account, not committed anywhere.
 
-## Step 3: Test It Works (30 seconds)
+You don't set a cart id or customer id. The server reads those from your profile at runtime.
+
+## 3. Test it
 
 ```bash
 python test_api.py
 ```
 
-You should see:
-```
-✅ Success! Found 18 online orders
-✅ Success! Found 7 suggestions
-✅ Success! Cart ID: your_cart_id_here
-✅ All tests passed!
-```
+You should see your past orders and cart come back. If you see a message about re-running
+the login, the refresh token was consumed or revoked; run `python login_pcid.py` again.
 
-If you get errors, see the [Troubleshooting](#troubleshooting) section below.
-
-## Step 4: Start the MCP Server (10 seconds)
+## 4. Run the server
 
 ```bash
-python zehrs_mcp_server.py
+python pcexpress_mcp_server.py
 ```
 
-The server is now running and waiting for MCP client connections!
+The server speaks MCP over stdio. It mints a fresh access token from your refresh token,
+rotates the refresh token on each use, and stores the current one in `PCEXPRESS_STATE_DIR`.
+An expired access token is refreshed automatically on the next call.
 
-## Step 5: Connect from Claude Desktop (Optional)
+## 5. Connect a client (Claude Desktop shown)
 
-If you want to test with Claude Desktop:
+Add this to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
+`%APPDATA%/Claude/claude_desktop_config.json` (Windows), then restart the app:
 
-1. Edit your Claude Desktop config:
-   - **Mac:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - **Windows:** `%APPDATA%/Claude/claude_desktop_config.json`
-
-2. Add this configuration:
 ```json
 {
   "mcpServers": {
-    "zehrs": {
+    "pcexpress": {
       "command": "python3",
-      "args": ["/Users/areed/temp/zehrs/zehrs_mcp_server.py"],
+      "args": ["/path/to/pcexpress_mcp_server.py"],
       "env": {
-        "ZEHRS_BEARER_TOKEN": "your_token_here",
-        "ZEHRS_CUSTOMER_ID": "your_customer_id_here",
-        "ZEHRS_CART_ID": "your_cart_id_here",
-        "ZEHRS_STORE_ID": "1234"
+        "PCEXPRESS_REFRESH_TOKEN": "your_refresh_token",
+        "PCEXPRESS_STATE_DIR": "~/.pcexpress-mcp",
+        "PCEXPRESS_BANNER": "zehrs",
+        "PCEXPRESS_STORE_ID": "1234"
       }
     }
   }
 }
 ```
 
-3. Restart Claude Desktop
+`PCEXPRESS_CLIENT_SECRET` is baked into the code, so you don't set it unless you want to
+override the default. For Docker, Home Assistant, and Kubernetes, see
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
-4. Test with: "Can you search my past Zehrs orders for ice cream?"
+## Example queries
 
-## Example Queries to Try
+Once a client is connected:
 
-Once connected to an MCP client (Claude Desktop, Home Assistant, etc.):
-
-### Past Orders
-- "What did I order from Zehrs last week?"
-- "Show me my recent grocery orders"
-- "What was in order 531900018513724?"
-
-### Product Search
-- "Search for ice cream at Zehrs"
-- "Find organic bananas"
-- "Look for coffee"
-
-### Cart Operations
-- "Add ice cream to my cart"
-- "What's in my Zehrs cart?"
-- "Remove product 21657456_EA from cart"
-- "Add 3 units of product 20143653_EA"
-
-### Smart Shopping
-- "I want to buy milk - what did I buy last time?"
-- "Add the same items from my last order"
-- "Search for greek yogurt and add it to cart"
+- Past orders: "What did I order from Zehrs last week?", "What was in order 531900018513724?"
+- Product search: "Search for ice cream", "Find organic bananas"
+- Cart: "What's in my cart?", "Add product 20143653_EA", "Remove 21657456_EA from my cart"
+- Shopping: "I want milk, what did I buy last time?", "Add greek yogurt to my cart"
 
 ## Troubleshooting
 
-### ❌ "Missing required credentials"
-- Make sure `.env` file exists in the project directory
-- Check that you replaced `YOUR_TOKEN_HERE` with your actual token
-- Verify no extra spaces or quotes around the token
+**"No refresh token" at startup.** You haven't set `PCEXPRESS_REFRESH_TOKEN`, or the state
+file is empty. Run `python setup.py` (or `login_pcid.py`) and set the value it prints.
 
-### ❌ "401 Unauthorized"
-- Your bearer token has expired (they last a few hours)
-- Get a new token:
-  1. Log in to https://www.zehrs.ca
-  2. Open DevTools (F12) → Network tab
-  3. Navigate to your cart
-  4. Find request to `api.pcexpress.ca/pcx-bff/api/v1/carts/`
-  5. Copy `Authorization: Bearer <TOKEN>` header
-  6. Update `.env` file
+**"Token refresh failed ... re-run login_pcid.py".** The refresh token was consumed or
+revoked. Refresh tokens are single-use, so if two processes share one token chain, one of
+them breaks. Run one instance, run the login again, and update the seed.
 
-### ❌ "404 Not Found"
-- Your cart ID might have changed
-- Export a new HAR file:
-  1. Clear browser cache/cookies
-  2. Log in fresh
-  3. Navigate cart and orders
-  4. Export HAR
-  5. Run: `python extract_credentials.py ~/Downloads/www.zehrs.ca.har`
+**HTTP 400 on cart calls.** The cart list needs a banner. The server sends it; if you're
+calling the API by hand, add `?banner=zehrs`.
 
-### ❌ Import errors
-```bash
-# Make sure you're in the right directory
-cd /Users/areed/temp/zehrs
-
-# Reinstall dependencies
-pip install -r requirements.txt
-```
-
-### ❌ "No module named 'mcp'"
-```bash
-# The MCP package might not be available via pip yet
-# Install from source or use the version in requirements.txt
-pip install --upgrade mcp
-```
-
-## Token Refresh Needed?
-
-Your token will expire! When it does:
-
-**Option 1: Quick Manual Update**
-1. Open https://www.zehrs.ca and log in
-2. DevTools → Network → Find API request
-3. Copy new Bearer token
-4. Update `.env` file
-
-**Option 2: Re-export HAR**
-1. Export new HAR file with fresh session
-2. Run: `python extract_credentials.py new_file.har`
-3. Automatically updates `.env`
-
-## Next Steps
-
-- ✅ Server running? Great!
-- 📱 Integrate with Home Assistant for voice control
-- 🤖 Build custom automation workflows
-- 🛒 Never forget items again!
-
-## Files You Created
-
-```
-/Users/areed/temp/zehrs/
-├── .env                      # Your credentials (NEVER commit!)
-├── .env.example              # Template
-├── .gitignore                # Git safety
-├── extract_credentials.py    # HAR → credentials
-├── mcp_config_example.json   # Claude Desktop config
-├── PROJECT_SUMMARY.md        # What we built
-├── QUICKSTART.md            # This file
-├── README.md                # Full documentation
-├── requirements.txt         # Python packages
-├── SETUP.md                 # Detailed setup
-├── test_api.py              # Test your credentials
-└── zehrs_mcp_server.py      # The MCP server ⭐
-```
-
-## Support
-
-Need help?
-1. Check `SETUP.md` for detailed instructions
-2. Read `PROJECT_SUMMARY.md` for architecture
-3. Review logs from `test_api.py`
-4. Make sure token hasn't expired
-
----
-
-**You're ready to go!** 🚀
-
-Your AI can now:
-- ✅ Search your past orders
-- ✅ Find products
-- ✅ Manage your cart
-- ✅ Help you shop smarter
-
-Just remember to refresh the token when it expires!
+**"No module named 'mcp'".** Run `pip install -r requirements.txt` in the same environment
+that runs the server.

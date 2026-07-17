@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """
+DEPRECATED. This HAR-based bearer-token extractor is no longer the auth path.
+
+Authentication now uses the PC ID OAuth flow with automatic token refresh. Use
+login_pcid.py (manual) or login_pcid_auto.py (browser automation) to get a refresh
+token instead. Kept only for reference / one-off cart_id extraction.
+
 Extract credentials from HAR file for Zehrs MCP Server
 
 This script parses a HAR file and extracts:

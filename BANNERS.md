@@ -1,136 +1,44 @@
-# Multi-Banner Support
+# Multi-banner support
 
-The PC Express MCP Server works across all Loblaws-owned grocery banners that use the PC Express platform!
+The server works across every PC Express banner. They share one backend
+(`api.pcexpress.ca`) and one identity provider (PC id), so a single login covers all of them.
 
-## Supported Banners
+## Supported banners
 
-| Banner | Code | Website | Notes |
-|--------|------|---------|-------|
-| **Zehrs** | `zehrs` | www.zehrs.ca | Ontario-based |
-| **Loblaws** | `loblaws` | www.loblaws.ca | Main banner |
-| **No Frills** | `nofrills` | www.nofrills.ca | Discount banner |
-| **Real Canadian Superstore** | `superstore` | www.realcanadiansuperstore.ca | Western Canada |
-| **Your Independent Grocer** | `independent` | www.yourindependentgrocer.ca | Franchise stores |
-| **T&T Supermarket** | `tandt` | www.tntsupermarket.com | Asian supermarket |
+| Banner | Code | Website |
+| --- | --- | --- |
+| Zehrs | `zehrs` | www.zehrs.ca |
+| Loblaws | `loblaws` | www.loblaws.ca |
+| No Frills | `nofrills` | www.nofrills.ca |
+| Real Canadian Superstore | `superstore` | www.realcanadiansuperstore.ca |
+| Your Independent Grocer | `independent` | www.yourindependentgrocer.ca |
+| T&T Supermarket | `tandt` | www.tntsupermarket.com |
 
-## How It Works
+## How it works
 
-All these banners use the same backend API (`api.pcexpress.ca`) with just a few differences:
+The banner changes three things, and the server handles all of them from `PCEXPRESS_BANNER`:
+the `Site-Banner` and `baseSiteId` headers, the `Origin` and `Referer`, and the banner segment
+in paths like `/ecommerce/v2/{banner}/customers/historical-orders`. Your cart id and customer
+id are read from the profile per banner, so you don't set them.
 
-1. **Banner Header**: `Site-Banner: {banner}`
-2. **Origin/Referer**: Points to the banner's website
-3. **API Paths**: Include banner name in URLs (e.g., `/ecommerce/v2/zehrs/...`)
+## Switching banners
 
-The server automatically handles these differences based on the `PCEXPRESS_BANNER` environment variable!
-
-## Using a Different Banner
-
-### Step 1: Get Credentials for Your Banner
-
-1. Visit your banner's website (e.g., www.nofrills.ca)
-2. Log in to your account
-3. Open DevTools (F12) → Network tab
-4. Navigate to your cart
-5. Export HAR file or copy credentials
-
-### Step 2: Update .env File
+PC id is one account across every banner, so the refresh token you already have works for all
+of them. To point the server at a different banner, change one variable:
 
 ```bash
-# Example for No Frills
-PCEXPRESS_BEARER_TOKEN=your_token_here
-PCEXPRESS_CUSTOMER_ID=your_customer_id
-PCEXPRESS_CART_ID=your_cart_id
-PCEXPRESS_STORE_ID=your_store_id
-PCEXPRESS_BANNER=nofrills
+PCEXPRESS_BANNER=nofrills python test_api.py
 ```
 
-### Step 3: Test
+Each banner has its own cart and its own order history under the same account, so switching the
+banner switches which cart and orders you see. Set `PCEXPRESS_STORE_ID` to a store that carries
+what you want, since availability and pricing vary by store and banner.
 
-```bash
-python test_api.py
-```
+## Running two banners at once
 
-You should see:
-```
-Testing PC Express API Client
-Banner: nofrills
-...
-```
-
-## Banner-Specific Notes
-
-### Zehrs (Ontario)
-- **Banner Code**: `zehrs`
-- **Store ID Example**: your_store_id
-- **Default in project**: Yes
-
-### Loblaws
-- **Banner Code**: `loblaws`
-- **Store ID Example**: Various across Canada
-- **Note**: Main flagship banner
-
-### No Frills
-- **Banner Code**: `nofrills`
-- **Note**: Budget-focused banner, same API
-
-### Real Canadian Superstore
-- **Banner Code**: `superstore`
-- **Region**: Primarily Western Canada
-- **Note**: Larger format stores
-
-### Independent
-- **Banner Code**: `independent`
-- **Note**: Franchise stores, may have different inventory
-
-### T&T Supermarket
-- **Banner Code**: `tandt`
-- **Specialty**: Asian groceries
-- **Note**: Different product selection
-
-## Finding Your Store ID
-
-Each store has a unique ID. To find yours:
-
-1. Log in to your banner's website
-2. Select your preferred store
-3. Open DevTools → Network → Find API requests
-4. Look for `storeId` parameter in request bodies
-5. Common format: 4-digit number (e.g., 1234, 5678)
-
-## Token Compatibility
-
-**Important**: Tokens are banner-specific!
-
-- A token from `www.zehrs.ca` only works with `PCEXPRESS_BANNER=zehrs`
-- A token from `www.nofrills.ca` only works with `PCEXPRESS_BANNER=nofrills`
-
-You cannot use a Zehrs token to access No Frills cart (and vice versa).
-
-## Multiple Banners
-
-Want to use multiple banners? Create separate MCP server instances:
-
-### Option 1: Multiple .env Files
-
-```bash
-# .env.zehrs
-PCEXPRESS_BANNER=zehrs
-PCEXPRESS_BEARER_TOKEN=...
-PCEXPRESS_CUSTOMER_ID=...
-PCEXPRESS_CART_ID=...
-
-# .env.nofrills
-PCEXPRESS_BANNER=nofrills
-PCEXPRESS_BEARER_TOKEN=...
-PCEXPRESS_CUSTOMER_ID=...
-PCEXPRESS_CART_ID=...
-```
-
-Load with: `python -c "from dotenv import load_dotenv; load_dotenv('.env.zehrs')"`
-
-### Option 2: Multiple MCP Server Entries
-
-In Claude Desktop config:
+Refresh tokens are single-use, so two server instances can't share one token chain. To run,
+say, Zehrs and No Frills at the same time, do the login twice to get two independent refresh
+tokens, and give each instance its own `PCEXPRESS_STATE_DIR`:
 
 ```json
 {
@@ -140,8 +48,8 @@ In Claude Desktop config:
       "args": ["/path/to/pcexpress_mcp_server.py"],
       "env": {
         "PCEXPRESS_BANNER": "zehrs",
-        "PCEXPRESS_BEARER_TOKEN": "...",
-        ...
+        "PCEXPRESS_REFRESH_TOKEN": "first_refresh_token",
+        "PCEXPRESS_STATE_DIR": "~/.pcexpress-mcp/zehrs"
       }
     },
     "nofrills": {
@@ -149,101 +57,25 @@ In Claude Desktop config:
       "args": ["/path/to/pcexpress_mcp_server.py"],
       "env": {
         "PCEXPRESS_BANNER": "nofrills",
-        "PCEXPRESS_BEARER_TOKEN": "...",
-        ...
+        "PCEXPRESS_REFRESH_TOKEN": "second_refresh_token",
+        "PCEXPRESS_STATE_DIR": "~/.pcexpress-mcp/nofrills"
       }
     }
   }
 }
 ```
 
-Then you can ask:
-- "Add milk to my Zehrs cart"
-- "What's in my No Frills cart?"
+Then ask "add milk to my Zehrs cart" or "what's in my No Frills cart?" and the client picks the
+matching server.
 
-## Testing Different Banners
+## Adding a new banner
 
-```bash
-# Test Zehrs
-PCEXPRESS_BANNER=zehrs python test_api.py
-
-# Test No Frills
-PCEXPRESS_BANNER=nofrills python test_api.py
-
-# Test Superstore
-PCEXPRESS_BANNER=superstore python test_api.py
-```
-
-## API Endpoint Structure
-
-The banner name appears in API paths:
-
-```
-# Zehrs
-GET /ecommerce/v2/zehrs/customers/historical-orders
-
-# No Frills
-GET /ecommerce/v2/nofrills/customers/historical-orders
-
-# Loblaws
-GET /ecommerce/v2/loblaws/customers/historical-orders
-```
-
-The server handles this automatically based on `PCEXPRESS_BANNER`.
-
-## Cross-Banner Compatibility
-
-**What works across banners:**
-- ✅ Same API structure
-- ✅ Same authentication method (Oracle IDCS)
-- ✅ Same static API key
-- ✅ Same cart operations
-- ✅ Same product search format
-
-**What's different per banner:**
-- ❌ Bearer tokens (banner-specific)
-- ❌ Customer accounts (separate per banner)
-- ❌ Shopping carts (one per banner)
-- ❌ Order history (separate per banner)
-- ❌ Product availability (varies by store/banner)
-- ❌ Pricing (may differ between banners)
-
-## Why This Matters
-
-**For Users:**
-- Shop at multiple Loblaws banners with one MCP server
-- Switch banners by changing one environment variable
-- Use same voice commands across different stores
-
-**For Developers:**
-- Generic codebase works for all banners
-- Easy to extend to new Loblaws acquisitions
-- Single API client for entire Loblaws ecosystem
+If Loblaw adds a banner, add its code and website to `BANNER_DOMAINS` in
+`pcexpress_mcp_server.py`, set `PCEXPRESS_BANNER` to the new code, and test. The rest of the
+code is banner-agnostic.
 
 ## Troubleshooting
 
-### "404 Not Found" on order history
-- Check that `PCEXPRESS_BANNER` matches where you got the token
-- Verify you have orders at that banner
-
-### "401 Unauthorized"
-- Token might be from a different banner
-- Token expired (get new one)
-
-### Different products in search
-- Each banner has different inventory
-- Store selection affects product availability
-- Some products are banner-exclusive
-
-## Future Banners
-
-If Loblaws launches new banners or acquires new chains, adding support is easy:
-
-1. Add banner code to `BANNER_DOMAINS` dict in `pcexpress_mcp_server.py`
-2. Get credentials from new banner's website
-3. Set `PCEXPRESS_BANNER` to new code
-4. Test!
-
----
-
-**Pro Tip**: Price compare by running searches across multiple banners! No Frills often has lower prices than Loblaws for the same items.
+- **HTTP 404 on order history**: the account has no orders at that banner, or the banner code is
+  wrong. The token itself is fine across banners.
+- **Different products in search**: inventory and pricing are per store and per banner.
