@@ -1,14 +1,12 @@
-# PC Express MCP in Kubernetes.
+# PC Express MCP in Kubernetes (plain manifests; homelab users deploy the Helm chart instead).
 #
 # Two auth-specific rules that matter here:
 #   1. replicas: 1 — the refresh token is single-use; two pods would knock each other out.
 #   2. A PVC mounted at PCEXPRESS_STATE_DIR holds the rotating refresh token. Without a
-#      persistent volume, a pod restart loses the rotated token and the seed in the Secret
-#      is already spent -> you'd have to re-run setup. This PVC is the load-bearing piece.
+#      persistent volume, a pod restart loses the rotated token and the seed in the Secret is
+#      already spent, so you'd have to re-run the login. This PVC is the load-bearing piece.
 #
-# The MCP server speaks stdio. To expose it on the network (so Home Assistant / clients can
-# reach it), it's wrapped with supergateway (stdio -> SSE), same pattern as other MCPs.
-# Build an image with both node+supergateway and this app, or adjust the command to your setup.
+# The image serves MCP over SSE at /sse (posts to /messages/) and exposes /health for probes.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -41,10 +39,7 @@ spec:
     spec:
       containers:
         - name: pcexpress-mcp
-          image: ghcr.io/fireball1725/pcexpress-mcp:latest   # your built image
-          # Expose the stdio server over SSE via supergateway:
-          command: ["npx", "-y", "supergateway"]
-          args: ["--stdio", "python pcexpress_mcp_server.py", "--port", "8000", "--outputTransport", "sse"]
+          image: ghcr.io/fireball1725/pcexpress-mcp:latest   # published by CI on a version tag
           env:
             - name: PCEXPRESS_STATE_DIR
               value: /data
@@ -52,7 +47,20 @@ spec:
             - secretRef:
                 name: pcexpress-mcp
           ports:
-            - containerPort: 8000
+            - name: http
+              containerPort: 8090
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 3
+            periodSeconds: 10
           volumeMounts:
             - name: state
               mountPath: /data
@@ -71,4 +79,4 @@ spec:
     app: pcexpress-mcp
   ports:
     - port: 80
-      targetPort: 8000
+      targetPort: 8090
