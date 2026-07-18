@@ -21,7 +21,6 @@ This server provides tools for:
 import json
 import logging
 import os
-import re
 from typing import Any, Optional
 from datetime import datetime
 
@@ -143,96 +142,54 @@ class PCExpressAPI:
 
         return self._request("GET", url).json()
 
-    def _get_build_id(self) -> str:
-        """
-        Get the current Next.js build ID from the website
-
-        Returns:
-            str: Build ID for Next.js data URLs
-        """
-        url = f"https://{self.domain}/en"
-        response = requests.get(url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        })
-        response.raise_for_status()
-
-        # Extract build ID from page HTML
-        match = re.search(r'buildId":"([^"]+)"', response.text)
-        if match:
-            return match.group(1)
-        raise ValueError("Could not extract build ID from website")
-
     def search_products(self, query: str, size: int = 48) -> dict:
         """
-        Search for products and return full product details with codes
+        Search for products and return the fields needed to add them to cart.
+
+        Uses the authenticated pcx-bff product-search endpoint (the same API the
+        other tools use), not website scraping. The endpoint requires lang, term,
+        storeId, and banner at the top level of the body; the product array comes
+        back under "results".
 
         Args:
             query: Search term (e.g., "milk", "ground beef")
             size: Maximum number of results to return (default: 48)
 
         Returns:
-            dict: Search results with products including articleNumber codes
+            dict: Search results with products including their codes
         """
-        # Get current build ID
-        build_id = self._get_build_id()
+        url = f"{self.BASE_URL}/products/search"
 
-        # Use Next.js data endpoint for search results
-        url = f"https://{self.domain}/_next/data/{build_id}/en/search.json"
-
-        params = {
-            "search-bar": query,
+        payload = {
+            "lang": "en",
+            "term": query,
             "storeId": self.store_id,
-            "cartId": self.cart_id
+            "banner": self.banner,
+            "cartId": self.cart_id,
+            "pagination": {"from": 0, "size": size},
         }
 
-        response = requests.get(url, params=params, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-            "Accept": "application/json"
-        })
-        response.raise_for_status()
-        data = response.json()
+        data = self._request("POST", url, json=payload).json()
 
-        # Extract products from Next.js response structure
         products = []
-        try:
-            page_props = data.get("pageProps", {})
-            search_data = page_props.get("initialSearchData", {})
-            layout = search_data.get("layout", {})
-            sections = layout.get("sections", {})
-            main_content = sections.get("mainContentCollection", {})
+        for item in data.get("results", [])[:size]:
+            products.append({
+                "code": item.get("code") or item.get("articleNumber"),
+                "name": item.get("name"),
+                "brand": item.get("brand"),
+                "packageSize": item.get("packageSize"),
+                "prices": item.get("prices"),
+                "dealPrice": item.get("dealPrice"),
+                "stockStatus": item.get("stockStatus"),
+                "link": item.get("link"),
+                "offerType": item.get("offerType"),
+            })
 
-            for component in main_content.get("components", []):
-                comp_data = component.get("data", {})
-                if "productTiles" in comp_data:
-                    tiles = comp_data["productTiles"]
-                    for tile in tiles[:size]:
-                        # Extract key product info
-                        description = tile.get("description") or ""
-                        product = {
-                            "code": tile.get("articleNumber"),
-                            "name": tile.get("title"),
-                            "brand": tile.get("brand"),
-                            "description": description.replace("<br/>", " ") if description else "",
-                            "price": tile.get("pricing", {}).get("price"),
-                            "packageSizing": tile.get("packageSizing"),
-                            "link": tile.get("link"),
-                            "offerType": tile.get("offerType"),
-                        }
-                        products.append(product)
-
-            return {
-                "query": query,
-                "totalResults": search_data.get("searchResultsCount", 0),
-                "products": products[:size]
-            }
-        except Exception as e:
-            logger.error(f"Error parsing search results: {e}")
-            return {
-                "query": query,
-                "totalResults": 0,
-                "products": [],
-                "error": str(e)
-            }
+        return {
+            "query": query,
+            "totalResults": data.get("pagination", {}).get("totalResults", len(products)),
+            "products": products,
+        }
 
     def get_product_details(self, product_code: str) -> dict:
         """
@@ -489,7 +446,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
         elif name == "search_products":
             query = arguments["query"]
-            limit = arguments.get("limit", 7)
+            limit = arguments.get("limit", 48)
             result = client.search_products(query, size=limit)
 
             return [TextContent(
