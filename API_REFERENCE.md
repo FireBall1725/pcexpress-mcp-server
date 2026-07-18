@@ -74,14 +74,27 @@ Set `quantity` to 0 to remove. Used by the `add_to_cart` and `remove_from_cart` 
 ### GET /products/{productCode}: from app / current server
 Product detail by code, for example `20039684_EA`. Used by the `get_product_details` tool.
 
-### Product search: website Next.js endpoint (current server)
-The current server searches through the banner website's Next.js data route
-(`/_next/data/{buildId}/en/search.json?search-bar=...&storeId=...&cartId=...`) rather than a
-pcx-bff route, because that path returns full product tiles without extra auth. This route is
-behind the website's Akamai layer, so it can be less reliable from a plain client than the
-pcx-bff calls. The app's own search paths (`/products/search`, `/products/type-ahead`,
-`/products/listing`) are visible in the decompiled app and are candidates for a future,
-token-authenticated replacement.
+### POST /products/search: token-authenticated (current server)
+Product search over the pcx-bff, used by the `search_products` tool. Request body:
+
+```json
+{"lang": "en", "term": "milk", "storeId": "0545", "banner": "zehrs", "cartId": "<cartId>", "pagination": {"from": 0, "size": 48}}
+```
+
+Required top-level fields: `lang`, `term`, `storeId`, `banner`. `storeId` must be top level
+(inside `fulfillmentInfo` or as a `?storeId=` query param it is rejected); `cartId` is optional.
+Products come back under `results` (array); each item has `code` (= `articleNumber`), `name`,
+`brand`, `prices`, `dealPrice`, `stockStatus`, `packageSize`, `link`, `offerType`. Response
+paging is under `pagination` (`pageNumber`, `pageSize`, `totalResults`).
+
+An earlier build scraped the website Next.js route
+(`/_next/data/{buildId}/en/search.json`); that broke when the site stopped exposing `buildId`
+in page HTML, so search was moved to this token-authenticated pcx-bff endpoint.
+
+### POST /products/type-ahead: token-authenticated
+Search suggestions. Body `{"lang": "en", "term": "milk", "storeId": "0545", "banner": "zehrs"}`
+(a POST, not a GET). Returns a bare JSON array of `{"suggestion": "..."}` objects. Not yet
+wired to a tool.
 
 ## Fulfillment
 
