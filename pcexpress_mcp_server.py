@@ -549,16 +549,53 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         )]
 
 
-async def main():
-    """Run the MCP server"""
+async def main_stdio():
+    """Run the MCP server over stdio (default; for Claude Desktop and local clients)."""
     async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
+        await app.run(read_stream, write_stream, app.create_initialization_options())
+
+
+def _build_http_app():
+    """Starlette app serving MCP over SSE at /sse (posts to /messages/), plus an
+    unauthenticated /health for probes. SSE is used rather than streamable-http because it
+    proxies cleanly through Traefik. Set PCEXPRESS_MCP_BEARER to require a bearer on /sse."""
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+    from starlette.responses import JSONResponse, Response
+    from mcp.server.sse import SseServerTransport
+
+    bearer = os.getenv("PCEXPRESS_MCP_BEARER")
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request):
+        if bearer and request.headers.get("authorization") != f"Bearer {bearer}":
+            return Response(status_code=401)
+        async with sse.connect_sse(request.scope, request.receive, request._send) as (r, w):
+            await app.run(r, w, app.create_initialization_options())
+        return Response()  # SSE response is already sent; give Starlette a callable to close cleanly
+
+    async def health(_request):
+        return JSONResponse({"status": "ok"})
+
+    return Starlette(routes=[
+        Route("/health", health, methods=["GET"]),
+        Route("/sse", handle_sse, methods=["GET"]),
+        Mount("/messages/", app=sse.handle_post_message),
+    ])
+
+
+def main_http():
+    """Serve MCP over HTTP/SSE (for containers and Kubernetes)."""
+    import uvicorn
+    port = int(os.getenv("PCEXPRESS_HTTP_PORT", "8090"))
+    logger.info("Serving MCP over SSE on 0.0.0.0:%s (endpoints: /sse, /health)", port)
+    uvicorn.run(_build_http_app(), host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main())
+    import sys
+    if "--http" in sys.argv or os.getenv("PCEXPRESS_HTTP") == "1":
+        main_http()
+    else:
+        asyncio.run(main_stdio())

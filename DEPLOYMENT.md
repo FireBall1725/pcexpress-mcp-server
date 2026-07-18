@@ -45,16 +45,18 @@ The rotated token lives in `~/.pcexpress-mcp` and survives restarts.
 
 ## Docker
 
-The container is stateless except for the token, so give it a volume.
+The image serves MCP over HTTP/SSE, so run it as a network service and give it a volume for
+the token.
 
 ```bash
-docker run --rm -i --env-file .env \
+docker run -d --name pcexpress-mcp -p 8090:8090 --env-file .env \
   -v pcx-state:/data -e PCEXPRESS_STATE_DIR=/data \
   ghcr.io/fireball1725/pcexpress-mcp
 ```
 
-The named volume `pcx-state` is what keeps the rotating token across container restarts.
-Drop the volume and you have to re-run `setup.py`.
+The MCP endpoint is `http://localhost:8090/sse`, and `/health` is a plain health check. The
+named volume `pcx-state` keeps the rotating token across container restarts; drop it and you
+re-run the login. Set `PCEXPRESS_MCP_BEARER` to require a bearer token on `/sse`.
 
 ## Home Assistant
 
@@ -81,8 +83,11 @@ Why each piece:
 - The Secret going stale in git is expected: after the first refresh the PVC is the source of
   truth and the seed is never read again.
 
-The server speaks stdio. To reach it over the network, wrap it with a stdio-to-SSE bridge
-(supergateway), the same way as other MCP servers; `k8s/deployment.yaml` shows the command.
+The image serves MCP over SSE directly, so no stdio-to-SSE bridge is needed. The `Service`
+targets container port 8090, and `/health` backs the liveness and readiness probes. Add a
+Traefik ingress (or your ingress of choice) to reach `/sse` from clients, and set
+`PCEXPRESS_MCP_BEARER` in the Secret if you want the endpoint gated. Homelab users deploy the
+Helm chart under `homelab-applications/pcexpress-mcp` rather than these raw manifests.
 
 ## When auth breaks
 
