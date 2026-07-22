@@ -84,6 +84,41 @@ class PCExpressAPI:
                 raise ValueError("No active cart found. Add an item to your cart, then retry.")
         return self._cart_id
 
+    def _refresh_cart_id(self) -> Optional[str]:
+        """Force re-discovery of the active cart id from the customer profile.
+
+        Loblaws expires carts server-side; when that happens the cached id is
+        dead and every /carts/{id} call 404s. Dropping the cache and re-reading
+        the customer profile picks up the account's current cart.
+        """
+        self._cart_id = None
+        return self.get_customer().get("cartId")
+
+    def _request_cart(self, method: str, path: str, **kwargs) -> requests.Response:
+        """Request a cart-scoped endpoint, self-healing a stale/expired cart.
+
+        `path` must contain a literal ``{cart_id}`` placeholder. On a 404 (the
+        cached cart was deleted server-side) the cart id is re-discovered once
+        and the request retried; if no fresh cart exists, a clear error is
+        raised instead of a bare 404.
+        """
+        stale_id = self.cart_id
+        url = f"{self.BASE_URL}{path.format(cart_id=stale_id)}"
+        try:
+            return self._request(method, url, **kwargs)
+        except requests.HTTPError as e:
+            if e.response is None or e.response.status_code != 404:
+                raise
+            fresh_id = self._refresh_cart_id()
+            if not fresh_id or fresh_id == stale_id:
+                raise ValueError(
+                    "The active cart no longer exists and the account has no "
+                    "current cart. Add an item in the PC Express app or website "
+                    "to create a fresh cart, then retry."
+                ) from e
+            url = f"{self.BASE_URL}{path.format(cart_id=fresh_id)}"
+            return self._request(method, url, **kwargs)
+
     def get_customer(self) -> dict:
         """Customer profile: cartId, customerId, name, postalCode, PC Optimum status, etc."""
         url = f"{self.BASE_URL}/ecommerce/v2/{self.banner}/customers"
@@ -212,9 +247,7 @@ class PCExpressAPI:
         Returns:
             dict: Cart data including items
         """
-        url = f"{self.BASE_URL}/carts/{self.cart_id}"
-
-        return self._request("GET", url).json()
+        return self._request_cart("GET", "/carts/{cart_id}").json()
 
     def add_to_cart(self, product_code: str, quantity: int = 1, fulfillment_method: str = "pickup") -> dict:
         """
@@ -228,8 +261,6 @@ class PCExpressAPI:
         Returns:
             dict: Updated cart data
         """
-        url = f"{self.BASE_URL}/carts/{self.cart_id}?inventory=true"
-
         payload = {
             "entries": {
                 product_code: {
@@ -240,7 +271,9 @@ class PCExpressAPI:
             }
         }
 
-        return self._request("POST", url, json=payload).json()
+        return self._request_cart(
+            "POST", "/carts/{cart_id}?inventory=true", json=payload
+        ).json()
 
     def remove_from_cart(self, product_code: str) -> dict:
         """
