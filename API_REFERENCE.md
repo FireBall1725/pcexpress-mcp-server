@@ -57,9 +57,22 @@ A single past order with its line items. Used by the `get_order_items` tool.
 Lists your carts. The `banner` query param is required; without it the call returns HTTP 400.
 Response: `carts`, `liveOrders`, `saveForLaterCart`.
 
+**`carts` vs `liveOrders` (critical):**
+
+- `carts` — open / idle shopping carts. List rows are thin (`id`, `modifiedTime`); call `GET /carts/{id}` for status, banner, store, and entries.
+- `liveOrders` — in-flight orders (e.g. SUBMITTED delivery). Same UUID shape as carts.
+- PC Express does **not** keep a separate open shopping cart while a live order is in flight for that banner: expect `liveOrders` populated and `carts` empty.
+- **Never POST cart mutations against a `liveOrders` id.** That updates the live order. Treat live-order carts as read-only / off-limits for shopping tools.
+
+**Seller / store binding:**
+
+- `customer.cartId` from the profile can point at another banner’s cart (e.g. Loblaws) even when `Site-Banner` is `independent`. Always resolve via this list + cart GET for the banner you intend.
+- Cart store id may appear under pickup (`orders[].fulfillment.pickupBooking.pickupLocation.storeId`) or courier delivery (`orders[].fulfillment.courier.storeId`). `POST` line items must send that store as `sellerId` or the BFF returns `SELLER_ID_MISMATCH`.
+
 ### GET /carts/{cartId}: verified
 The full cart. Optional query: `inventory=true`. Response includes `id`, `status`, `bannerId`,
 `customer`, `orders`, `minCartValue`, `orderAggregations`. Used by the `view_cart` tool.
+Requires `Accept-Language: en` or `fr` (invalid/missing language → HTTP 400).
 
 ### GET /carts/{cartId}/heartbeat: verified
 Keeps the cart session alive. Response: `{ "cartId", "lastModifiedTime" }`.
@@ -68,6 +81,7 @@ Keeps the cart session alive. Response: `{ "cartId", "lastModifiedTime" }`.
 Add or update a line. Body:
 `{ "entries": { "<productCode>": { "quantity": N, "fulfillmentMethod": "pickup", "sellerId": "<storeId>" } } }`.
 Set `quantity` to 0 to remove. Used by the `add_to_cart` and `remove_from_cart` tools.
+`sellerId` must match the cart’s bound store.
 
 ## Products
 
