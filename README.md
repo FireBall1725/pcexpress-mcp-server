@@ -29,14 +29,20 @@ Works with all PC Express enabled stores:
 
 ## ✨ Features
 
-### MCP Tools (6)
+### MCP Tools (8)
 
 1. **search_past_orders** - Find items from your order history
-2. **get_order_items** - Get detailed product list from specific orders
-3. **search_products** - Search the product catalog
-4. **add_to_cart** - Add products to your shopping cart
-5. **remove_from_cart** - Remove items from cart
-6. **view_cart** - See current cart contents
+2. **get_order_items** - Get product list from specific orders
+3. **search_products** - Search the product catalog (default 12 hits)
+4. **get_product_details** - Compact product details by code
+5. **add_to_cart** - Add/update one product (returns slim cart summary)
+6. **add_to_cart_batch** - Add/update many products in one request
+7. **remove_from_cart** - Remove items from cart
+8. **view_cart** - Slim cart summary (entries + subTotal)
+
+Tool results are field-projected and compact JSON to keep LLM context small. Cart ids are
+resolved safely for your banner/store (with TTL cache); product search can use a file cache
+under `PCEXPRESS_STATE_DIR`.
 
 ### Integration Ready
 

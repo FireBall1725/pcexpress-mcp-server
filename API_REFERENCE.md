@@ -92,11 +92,12 @@ Product detail by code, for example `20039684_EA`. Used by the `get_product_deta
 Product search over the pcx-bff, used by the `search_products` tool. Request body:
 
 ```json
-{"lang": "en", "term": "milk", "storeId": "0545", "banner": "zehrs", "cartId": "<cartId>", "pagination": {"from": 0, "size": 48}}
+{"lang": "en", "term": "milk", "storeId": "0545", "banner": "zehrs", "cartId": "<cartId>", "pagination": {"from": 0, "size": 12}}
 ```
 
 Required top-level fields: `lang`, `term`, `storeId`, `banner`. `storeId` must be top level
 (inside `fulfillmentInfo` or as a `?storeId=` query param it is rejected); `cartId` is optional.
+The MCP `search_products` tool defaults to `size` 12 (override with `limit`).
 Products come back under `results` (array); each item has `code` (= `articleNumber`), `name`,
 `brand`, `prices`, `dealPrice`, `stockStatus`, `packageSize`, `link`, `offerType`. Response
 paging is under `pagination` (`pageNumber`, `pageSize`, `totalResults`).

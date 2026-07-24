@@ -28,10 +28,15 @@ call to a `PCExpressAPI` method, and handles errors. It loads configuration from
 environment (and a `.env` file if present).
 
 **PCExpressAPI** builds each request, injects the auth and banner headers, and parses the
-response. Its `_request()` wrapper retries once on an HTTP 401 after forcing a token refresh,
-so an access token expiring mid-session is invisible to the caller. It holds the banner, the
-store id, and a lazily-resolved cart id. `customerId` and `cartId` are read from the customer
-profile the first time they're needed, so neither is configured by hand.
+response. Its `_request()` wrapper uses connect/read timeouts, retries once on HTTP 401 after
+forcing a token refresh, and retries once on HTTP 429. It holds the banner, the store id, and
+a TTL-cached cart id resolved via `GET /customers/{id}/carts?banner=` (OPEN cart for the
+configured store — not a blind `customer.cartId`, which can point at another banner). Live
+orders lock cart mutations. Optional product-search responses are cached under
+`PCEXPRESS_STATE_DIR/search-cache`.
+
+**pcx_shape.py** projects raw BFF JSON into slim agent-facing payloads (search hits, cart
+entries, order lines, product details) so MCP tool results stay small in the LLM context.
 
 **TokenManager** (`pcid_token.py`) owns authentication. It reads the refresh token from the
 state file, or from `PCEXPRESS_REFRESH_TOKEN` on first run, exchanges it for an access token
@@ -64,20 +69,23 @@ restart continues the chain. Only one instance may run per chain.
 
 ## Tools
 
-Six tools, each a thin wrapper over one request:
+Eight tools. Handlers are async and run blocking BFF I/O via `asyncio.to_thread`; results are
+compact JSON (no indent) and field-projected via `pcx_shape`:
 
 - `search_past_orders` -> `GET /ecommerce/v2/{banner}/customers/historical-orders`
 - `get_order_items` -> `GET /ecommerce/v2/{banner}/customers/historical-orders/{orderId}`
-- `search_products` -> the banner website's Next.js search route (see API_REFERENCE.md)
+- `search_products` -> `POST /products/search` (default limit 12; optional file cache)
 - `get_product_details` -> `GET /products/{productCode}`
-- `add_to_cart` and `remove_from_cart` -> `POST /carts/{cartId}?inventory=true`
-- `view_cart` -> `GET /carts/{cartId}`
+- `add_to_cart` / `add_to_cart_batch` / `remove_from_cart` -> `POST /carts/{cartId}?inventory=true`
+  (batch packs multiple `entries` into one POST; mutate tools return a slim cart summary)
+- `view_cart` -> `GET /carts/{cartId}?inventory=true` (slim entries + subTotal)
 
 ## Configuration
 
 The server reads these environment variables (also loadable from `.env`):
 `PCEXPRESS_REFRESH_TOKEN`, `PCEXPRESS_STATE_DIR`, `PCEXPRESS_BANNER`, `PCEXPRESS_STORE_ID`,
-`PCEXPRESS_CART_ID` (optional, auto-discovered), and `PCEXPRESS_CLIENT_SECRET` (optional,
+`PCEXPRESS_CART_ID` (optional, safely auto-discovered), `PCEXPRESS_CART_TTL_SEC`,
+`PCEXPRESS_SEARCH_CACHE`, `PCEXPRESS_SEARCH_CACHE_TTL_SEC`, and `PCEXPRESS_CLIENT_SECRET` (optional,
 baked default). The static web apikey `C1xujSegT5j3ap3yexJjqhOfELwGKYvz` and the base url are
 constants in the code. See [SETUP.md](SETUP.md) for the full table.
 
@@ -102,7 +110,7 @@ the one-time browser step and keeps nothing.
 
 The server serves one account per token chain and does one store at a time. It reads data and
 edits the cart; it does not place orders. `homeStore` in the customer profile means the store
-id could be auto-discovered the same way the cart id already is. The website-based product
-search could move to the app's token-authenticated `/products/search` route for reliability.
+id could be auto-discovered the same way the cart id already is. Redis / multi-instance shared
+caches remain optional for multi-replica deployments.
 Redis caching, async I/O, and connection pooling are open if throughput ever matters, which for
 a personal grocery account it doesn't.
