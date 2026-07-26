@@ -549,6 +549,7 @@ def _build_http_app():
     """Starlette app serving MCP over SSE at /sse (posts to /messages/), plus an
     unauthenticated /health for probes. SSE is used rather than streamable-http because it
     proxies cleanly through Traefik. Set PCEXPRESS_MCP_BEARER to require a bearer on /sse."""
+    from urllib.parse import parse_qs
     from starlette.applications import Starlette
     from starlette.routing import Mount, Route
     from starlette.responses import JSONResponse, Response
@@ -557,6 +558,11 @@ def _build_http_app():
     bearer = os.getenv("PCEXPRESS_MCP_BEARER")
     sse = SseServerTransport("/messages/")
 
+    # Session ids seen to complete an `initialize` handshake. A client that re-opens the
+    # SSE stream gets a brand new session, and that session refuses every request until
+    # it handshakes again. See handle_messages.
+    handshaken: set[str] = set()
+
     async def handle_sse(request):
         if bearer and request.headers.get("authorization") != f"Bearer {bearer}":
             return Response(status_code=401)
@@ -564,13 +570,76 @@ def _build_http_app():
             await app.run(r, w, app.create_initialization_options())
         return Response()  # SSE response is already sent; give Starlette a callable to close cleanly
 
+    async def handle_messages(scope, receive, send):
+        """Reject posts to a session that never handshook, rather than handing them to a
+        ServerSession that answers -32602 'Invalid request parameters' to every one.
+
+        A client that reconnects the SSE stream but skips `initialize` otherwise wedges:
+        the post is accepted because the session id is live, the session then refuses to
+        serve it, and -32602 reads as a caller mistake, so retrying with different
+        arguments never helps. A 409 names the real problem and says how to clear it."""
+        body = b""
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if replayed:
+                return {"type": "http.disconnect"}
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        method = None
+        try:
+            payload = json.loads(body)
+            if isinstance(payload, dict):
+                method = payload.get("method")
+        except (ValueError, TypeError):
+            pass  # let the transport produce its own parse error
+
+        session_id = parse_qs(scope.get("query_string", b"").decode()).get("session_id", [None])[0]
+        # Private attr: if a future SDK renames it, skip the guard rather than break the
+        # transport. Worst case is the old -32602 behaviour, not an outage.
+        writers = getattr(sse, "_read_stream_writers", None)
+        live = {sid.hex for sid in writers} if writers is not None else set()
+        handshaken.intersection_update(live)  # forget ids whose stream has gone
+
+        if session_id and session_id in live:
+            if method == "initialize":
+                handshaken.add(session_id)
+            elif (
+                session_id not in handshaken
+                and method is not None
+                and not method.startswith("notifications/")
+            ):
+                logger.warning(
+                    "Refusing %s on session %s: no initialize handshake on this stream. "
+                    "The client must reopen /sse and handshake before calling tools.",
+                    method, session_id,
+                )
+                await Response(
+                    "Session has not completed the initialize handshake. Reopen the SSE "
+                    "stream at /sse and send initialize before other requests.",
+                    status_code=409,
+                )(scope, replay, send)
+                return
+
+        await sse.handle_post_message(scope, replay, send)
+
     async def health(_request):
         return JSONResponse({"status": "ok"})
 
     return Starlette(routes=[
         Route("/health", health, methods=["GET"]),
         Route("/sse", handle_sse, methods=["GET"]),
-        Mount("/messages/", app=sse.handle_post_message),
+        Mount("/messages/", app=handle_messages),
     ])
 
 
