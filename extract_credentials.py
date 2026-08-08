@@ -31,61 +31,61 @@ def extract_credentials_from_har(har_file_path: str) -> dict:
     Returns:
         dict: Extracted credentials
     """
-    with open(har_file_path, 'r') as f:
+    with open(har_file_path) as f:
         har = json.load(f)
 
     credentials = {
-        'bearer_token': None,
-        'customer_id': None,
-        'cart_id': None,
-        'store_id': None,
+        "bearer_token": None,
+        "customer_id": None,
+        "cart_id": None,
+        "store_id": None,
     }
 
     # Parse all entries
-    for entry in har['log']['entries']:
-        url = entry['request']['url']
+    for entry in har["log"]["entries"]:
+        url = entry["request"]["url"]
 
         # Look for API requests to pcexpress
-        if 'api.pcexpress.ca' not in url:
+        if "api.pcexpress.ca" not in url:
             continue
 
         # Extract bearer token from headers
-        if credentials['bearer_token'] is None:
-            for header in entry['request']['headers']:
-                if header['name'].lower() == 'authorization' and 'Bearer' in header['value']:
-                    credentials['bearer_token'] = header['value'].replace('Bearer ', '').strip()
+        if credentials["bearer_token"] is None:
+            for header in entry["request"]["headers"]:
+                if header["name"].lower() == "authorization" and "Bearer" in header["value"]:
+                    credentials["bearer_token"] = header["value"].replace("Bearer ", "").strip()
                     break
 
         # Extract cart ID from URL
-        cart_match = re.search(r'/carts/([a-f0-9\-]{36})', url)
-        if cart_match and credentials['cart_id'] is None:
-            credentials['cart_id'] = cart_match.group(1)
+        cart_match = re.search(r"/carts/([a-f0-9\-]{36})", url)
+        if cart_match and credentials["cart_id"] is None:
+            credentials["cart_id"] = cart_match.group(1)
 
         # Extract customer ID from URL
-        customer_match = re.search(r'/customers/([a-f0-9\-]{36})', url)
-        if customer_match and credentials['customer_id'] is None:
-            credentials['customer_id'] = customer_match.group(1)
+        customer_match = re.search(r"/customers/([a-f0-9\-]{36})", url)
+        if customer_match and credentials["customer_id"] is None:
+            credentials["customer_id"] = customer_match.group(1)
 
         # Extract store ID from request body or query params
-        if 'storeId' in url and credentials['store_id'] is None:
-            store_match = re.search(r'storeId=(\d+)', url)
+        if "storeId" in url and credentials["store_id"] is None:
+            store_match = re.search(r"storeId=(\d+)", url)
             if store_match:
-                credentials['store_id'] = store_match.group(1)
+                credentials["store_id"] = store_match.group(1)
 
         # Also check POST body for store ID
-        if credentials['store_id'] is None and 'postData' in entry['request']:
-            post_text = entry['request']['postData'].get('text', '')
-            if 'storeId' in post_text:
+        if credentials["store_id"] is None and "postData" in entry["request"]:
+            post_text = entry["request"]["postData"].get("text", "")
+            if "storeId" in post_text:
                 try:
                     post_data = json.loads(post_text)
-                    if 'storeId' in post_data:
-                        credentials['store_id'] = post_data['storeId']
-                except:
+                    if "storeId" in post_data:
+                        credentials["store_id"] = post_data["storeId"]
+                except (KeyError, TypeError, ValueError):
                     pass
 
     # Set default store ID if not found
-    if credentials['store_id'] is None:
-        credentials['store_id'] = '0000'  # Placeholder - update with your store
+    if credentials["store_id"] is None:
+        credentials["store_id"] = "0000"  # Placeholder - update with your store
 
     return credentials
 
@@ -108,7 +108,7 @@ def main():
     credentials = extract_credentials_from_har(har_file)
 
     # Check if we got all required credentials
-    missing = [k for k, v in credentials.items() if v is None and k != 'store_id']
+    missing = [k for k, v in credentials.items() if v is None and k != "store_id"]
 
     if missing:
         print(f"\n⚠️  Warning: Could not extract: {', '.join(missing)}")
@@ -119,9 +119,9 @@ def main():
         print()
 
     # Print credentials
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("EXTRACTED CREDENTIALS")
-    print("="*60)
+    print("=" * 60)
 
     for key, value in credentials.items():
         if value:
@@ -134,18 +134,18 @@ def main():
             print(f"{key.upper()}: ❌ NOT FOUND")
 
     # Generate .env file
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("GENERATED .env FILE CONTENT")
-    print("="*60)
+    print("=" * 60)
     print()
 
     env_content = f"""# Zehrs MCP Server Configuration
 # Generated from HAR file on {Path(har_file).name}
 
-ZEHRS_BEARER_TOKEN={credentials['bearer_token'] or 'YOUR_TOKEN_HERE'}
-ZEHRS_CUSTOMER_ID={credentials['customer_id'] or 'YOUR_CUSTOMER_ID_HERE'}
-ZEHRS_CART_ID={credentials['cart_id'] or 'YOUR_CART_ID_HERE'}
-ZEHRS_STORE_ID={credentials['store_id'] or '1234'}
+ZEHRS_BEARER_TOKEN={credentials["bearer_token"] or "YOUR_TOKEN_HERE"}
+ZEHRS_CUSTOMER_ID={credentials["customer_id"] or "YOUR_CUSTOMER_ID_HERE"}
+ZEHRS_CART_ID={credentials["cart_id"] or "YOUR_CART_ID_HERE"}
+ZEHRS_STORE_ID={credentials["store_id"] or "1234"}
 """
 
     print(env_content)
@@ -154,12 +154,12 @@ ZEHRS_STORE_ID={credentials['store_id'] or '1234'}
     env_file = Path(__file__).parent / ".env"
 
     if env_file.exists():
-        response = input(f"\n.env file already exists. Overwrite? (y/N): ")
-        if response.lower() != 'y':
+        response = input("\n.env file already exists. Overwrite? (y/N): ")
+        if response.lower() != "y":
             print("Skipping .env file creation.")
             return
 
-    with open(env_file, 'w') as f:
+    with open(env_file, "w") as f:
         f.write(env_content)
 
     print(f"\n✅ Credentials written to {env_file}")

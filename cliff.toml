@@ -1,0 +1,89 @@
+# Shared changelog config. Copied into every repo by scaffold.sh; do not
+# hand-edit a copy.
+#
+# Where the text comes from: the PR title, not the commit subject. House style
+# is that a PR title is written for someone reading a changelog
+# ("Show an MPN that has no manufacturer"), which is already a better line than
+# a conventional-commit prefix would produce. Repos that ship straight from
+# main and have no PR fall back to the commit subject.
+#
+# How lines are grouped: a single `type/*` label on the PR. An unlabelled PR is
+# not an error; it lands under "Changes".
+
+# There is deliberately no [remote.github] section here. An empty table makes
+# git-cliff demand `owner`, which would make this file repo-specific. The
+# changelog action passes `--github-repo ${{ github.repository }}` instead, so
+# this file stays byte-identical everywhere.
+
+[changelog]
+header = ""
+trim = true
+body = """
+{% for commit in commits | filter(attribute="merge_commit", value=false) %}
+- {{ commit.remote.pr_title | default(value=commit.message | split(pat="\n") | first) | trim | upper_first }}\
+{% if commit.remote.pr_number %} (#{{ commit.remote.pr_number }}){% endif %}
+{%- endfor %}
+"""
+footer = ""
+postprocessors = []
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+require_conventional = false
+split_commits = false
+protect_breaking_commits = false
+filter_commits = false
+sort_commits = "oldest"
+topo_order = false
+
+# LayerLens writes conventional-commit subjects; the rest of the repos don't.
+# Strip the prefix so a fallback line reads "Build universal app for Intel and
+# Apple Silicon" rather than "Feat: build universal app...". Runs before the
+# parsers below, so any skip pattern here has to match the stripped form.
+[[git.commit_preprocessors]]
+pattern = '^(feat|fix|perf|refactor|docs|test|build|ci|style|chore|revert)(\([^)]*\))?!?: *'
+replace = ""
+
+# Bookkeeping the release workflows generate. None of it is a change anyone
+# reading a changelog cares about.
+[[git.commit_parsers]]
+message = "^appcast"
+skip = true
+
+[[git.commit_parsers]]
+message = "^Bump to v"
+skip = true
+
+[[git.commit_parsers]]
+message = "^release:"
+skip = true
+
+# Matches the stripped form: the preprocessor above has already removed the
+# "chore: " prefix by the time this runs.
+[[git.commit_parsers]]
+message = "^[Bb]ump Debug"
+skip = true
+
+[[git.commit_parsers]]
+message = "^Merge (branch|pull request)"
+skip = true
+
+# Deliberately NO `field = "remote.pr_labels"` parsers here.
+#
+# Label-based grouping was the first design and it silently loses commits. A
+# commit_parser matching on `remote.pr_labels` raises a field error for any
+# commit that has no associated PR, and git-cliff skips that commit entirely
+# rather than falling through to the catch-all below. Verified 2026-08-07
+# against firebin-mcp: one unmerged commit produced an empty changelog and a
+# warning nobody would read in CI.
+#
+# Commits with no PR are the normal case in LayerLens and pcexpress-mcp-server,
+# which ship straight from main, so this is not an edge case.
+#
+# One flat list it is. Grouping can come back the day every repo merges through
+# labelled PRs, and it will be a change to this file only.
+
+[[git.commit_parsers]]
+message = ".*"
+group = "Changes"

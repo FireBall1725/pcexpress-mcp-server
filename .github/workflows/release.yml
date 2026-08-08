@@ -1,0 +1,42 @@
+name: Release
+
+# The release lives in FireBall1725/workflows.
+#
+# This replaces a tag-push workflow: releases were cut by running `git tag v0.2.1
+# && git push --tags` by hand, which meant the version was whatever someone
+# typed. It is now computed as YY.M.revision from the date and the tag list.
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        default: rc
+        type: choice
+        options:
+          - rc
+          - stable
+      dry-run:
+        description: Compute and build, but push nothing and tag nothing
+        required: false
+        default: false
+        type: boolean
+      force-version:
+        description: Re-cut this exact version instead of computing the next one
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      packages: write
+    uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
+    with:
+      image: ghcr.io/fireball1725/pcexpress-mcp
+      channel: ${{ inputs.channel }}
+      dry-run: ${{ inputs.dry-run }}
+      force-version: ${{ inputs.force-version }}
+    secrets: inherit

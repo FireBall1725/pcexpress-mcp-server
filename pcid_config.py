@@ -11,6 +11,7 @@ Resolution order lets you override it without editing code:
     3. the baked-in default below
 If Loblaw ever rotates it, update the baked value (or drop a new one via 1 or 2).
 """
+
 import os
 
 CLIENT_ID = os.getenv("PCEXPRESS_CLIENT_ID", "ef9659ede6d44c7ab417f3485c11286c")
@@ -24,8 +25,10 @@ def _resolve_secret() -> str | None:
     if v:
         return v
     here = os.path.dirname(os.path.abspath(__file__))
-    for path in (os.path.join(here, "client_secret.txt"),
-                 os.path.expanduser("~/.pcexpress-mcp/client_secret")):
+    for path in (
+        os.path.join(here, "client_secret.txt"),
+        os.path.expanduser("~/.pcexpress-mcp/client_secret"),
+    ):
         try:
             with open(path) as f:
                 s = f.read().strip()

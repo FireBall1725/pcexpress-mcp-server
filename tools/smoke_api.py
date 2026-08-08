@@ -5,6 +5,7 @@ Exercises the real auth path (headless refresh) and a few read calls without goi
 MCP. Set PCEXPRESS_REFRESH_TOKEN (and PCEXPRESS_STATE_DIR / PCEXPRESS_BANNER) first, or run
 setup.py / login_pcid.py to get a refresh token.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pcexpress_mcp_server import PCExpressAPI
-from pcid_token import TokenManager, PcidAuthError
+from pcid_token import PcidAuthError, TokenManager
 
 
 def main():
@@ -47,8 +48,10 @@ def main():
     print("\n[2] Past orders")
     try:
         orders = api.get_historical_orders()
-        print(f"✅ onlineOrdersCount={orders.get('onlineOrdersCount')} "
-              f"returned={len(orders.get('orderHistory', []))}")
+        print(
+            f"✅ onlineOrdersCount={orders.get('onlineOrdersCount')} "
+            f"returned={len(orders.get('orderHistory', []))}"
+        )
     except Exception as e:
         print(f"❌ {e}")
 
@@ -56,7 +59,9 @@ def main():
     try:
         cart = api.get_cart()
         orders_in_cart = cart.get("orders") or []
-        print(f"✅ cart id={cart.get('id')} status={cart.get('status')} order-groups={len(orders_in_cart)}")
+        print(
+            f"✅ cart id={cart.get('id')} status={cart.get('status')} order-groups={len(orders_in_cart)}"
+        )
     except Exception as e:
         print(f"❌ {e}")
 

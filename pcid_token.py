@@ -5,6 +5,8 @@ short-lived access tokens on demand against accounts.pcid.ca/oauth2/v1/token —
 HTTPS, no browser, not bot-walled. Handles refresh-token rotation by persisting the
 current refresh token to a writable state file so it survives restarts.
 """
+
+import contextlib
 import json
 import logging
 import os
@@ -24,7 +26,9 @@ class PcidAuthError(Exception):
 
 class TokenManager:
     def __init__(self, state_dir: str | None = None):
-        state_dir = state_dir or os.getenv("PCEXPRESS_STATE_DIR", os.path.expanduser("~/.pcexpress-mcp"))
+        state_dir = state_dir or os.getenv(
+            "PCEXPRESS_STATE_DIR", os.path.expanduser("~/.pcexpress-mcp")
+        )
         os.makedirs(state_dir, exist_ok=True)
         self._state_path = os.path.join(state_dir, "pcid_token_state.json")
         self._lock = threading.Lock()
@@ -64,10 +68,8 @@ class TokenManager:
                 f,
             )
         os.replace(tmp, self._state_path)
-        try:
+        with contextlib.suppress(OSError):
             os.chmod(self._state_path, 0o600)
-        except OSError:
-            pass
 
     def get_access_token(self, force: bool = False) -> str:
         with self._lock:

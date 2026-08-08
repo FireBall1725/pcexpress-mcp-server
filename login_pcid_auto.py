@@ -20,7 +20,9 @@ Notes:
     to the server.
   - Accounts with 2FA cannot be automated — use login_pcid.py (manual) for those.
 """
+
 import base64
+import contextlib
 import hashlib
 import os
 import secrets
@@ -74,7 +76,9 @@ def login_auto(email: str, password: str, headed: bool = True) -> dict:
         context.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
         try:
             from playwright_stealth import stealth_sync  # optional
-            page = context.new_page(); stealth_sync(page)
+
+            page = context.new_page()
+            stealth_sync(page)
         except Exception:
             page = context.new_page()
 
@@ -88,21 +92,17 @@ def login_auto(email: str, password: str, headed: bool = True) -> dict:
             page.wait_for_url("**/login/success**", timeout=45000)
         except Exception:
             shot = os.path.abspath("pcid_login_failure.png")
-            try:
+            with contextlib.suppress(Exception):
                 page.screenshot(path=shot)
-            except Exception:
-                pass
             body = ""
-            try:
+            with contextlib.suppress(Exception):
                 body = page.inner_text("body")[:300]
-            except Exception:
-                pass
             browser.close()
             raise SystemExit(
                 "Did not reach login success. Likely a wrong password, 2FA, or a bot block.\n"
                 f"Current URL: {page.url}\nPage said: {body}\nScreenshot: {shot}\n"
                 "For 2FA accounts, use login_pcid.py (manual)."
-            )
+            ) from None
         success_url = page.url
         browser.close()
 

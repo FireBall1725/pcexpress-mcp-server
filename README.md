@@ -212,7 +212,7 @@ server_params = StdioServerParameters(
     env={
         "PCEXPRESS_REFRESH_TOKEN": "your_refresh_token",
         # ... other env vars
-    }
+    },
 )
 
 async with stdio_client(server_params) as (read, write):
@@ -223,9 +223,7 @@ async with stdio_client(server_params) as (read, write):
         tools = await session.list_tools()
 
         # Call a tool
-        result = await session.call_tool("search_products", {
-            "query": "ice cream"
-        })
+        result = await session.call_tool("search_products", {"query": "ice cream"})
 ```
 
 ## 📚 Documentation

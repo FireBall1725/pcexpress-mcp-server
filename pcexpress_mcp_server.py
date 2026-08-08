@@ -21,16 +21,15 @@ This server provides tools for:
 import json
 import logging
 import os
-from typing import Any, Optional
-from datetime import datetime
+from typing import Any
 
 import requests
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
-from pcid_token import TokenManager, PcidAuthError
+from pcid_token import TokenManager
 
 # Load .env if present (no-op when the launcher passes env directly)
 load_dotenv()
@@ -58,7 +57,13 @@ class PCExpressAPI:
         "tandt": "www.tntsupermarket.com",
     }
 
-    def __init__(self, token_manager: TokenManager, cart_id: str, store_id: str = "1234", banner: str = "zehrs"):
+    def __init__(
+        self,
+        token_manager: TokenManager,
+        cart_id: str,
+        store_id: str = "1234",
+        banner: str = "zehrs",
+    ):
         """
         Initialize PCExpressAPI client
 
@@ -84,7 +89,7 @@ class PCExpressAPI:
                 raise ValueError("No active cart found. Add an item to your cart, then retry.")
         return self._cart_id
 
-    def _refresh_cart_id(self) -> Optional[str]:
+    def _refresh_cart_id(self) -> str | None:
         """Force re-discovery of the active cart id from the customer profile.
 
         Loblaws expires carts server-side; when that happens the cached id is
@@ -208,17 +213,19 @@ class PCExpressAPI:
 
         products = []
         for item in data.get("results", [])[:size]:
-            products.append({
-                "code": item.get("code") or item.get("articleNumber"),
-                "name": item.get("name"),
-                "brand": item.get("brand"),
-                "packageSize": item.get("packageSize"),
-                "prices": item.get("prices"),
-                "dealPrice": item.get("dealPrice"),
-                "stockStatus": item.get("stockStatus"),
-                "link": item.get("link"),
-                "offerType": item.get("offerType"),
-            })
+            products.append(
+                {
+                    "code": item.get("code") or item.get("articleNumber"),
+                    "name": item.get("name"),
+                    "brand": item.get("brand"),
+                    "packageSize": item.get("packageSize"),
+                    "prices": item.get("prices"),
+                    "dealPrice": item.get("dealPrice"),
+                    "stockStatus": item.get("stockStatus"),
+                    "link": item.get("link"),
+                    "offerType": item.get("offerType"),
+                }
+            )
 
         return {
             "query": query,
@@ -249,7 +256,9 @@ class PCExpressAPI:
         """
         return self._request_cart("GET", "/carts/{cart_id}").json()
 
-    def add_to_cart(self, product_code: str, quantity: int = 1, fulfillment_method: str = "pickup") -> dict:
+    def add_to_cart(
+        self, product_code: str, quantity: int = 1, fulfillment_method: str = "pickup"
+    ) -> dict:
         """
         Add item to cart or update quantity
 
@@ -266,14 +275,12 @@ class PCExpressAPI:
                 product_code: {
                     "quantity": quantity,
                     "fulfillmentMethod": fulfillment_method,
-                    "sellerId": self.store_id
+                    "sellerId": self.store_id,
                 }
             }
         }
 
-        return self._request_cart(
-            "POST", "/carts/{cart_id}?inventory=true", json=payload
-        ).json()
+        return self._request_cart("POST", "/carts/{cart_id}?inventory=true", json=payload).json()
 
     def remove_from_cart(self, product_code: str) -> dict:
         """
@@ -292,7 +299,7 @@ class PCExpressAPI:
 app = Server("pcexpress-mcp")
 
 # Global API client (will be initialized with credentials)
-api_client: Optional[PCExpressAPI] = None
+api_client: PCExpressAPI | None = None
 
 
 def get_api_client() -> PCExpressAPI:
@@ -329,10 +336,10 @@ async def list_tools() -> list[Tool]:
                     "limit": {
                         "type": "number",
                         "description": "Maximum number of orders to return (default: 10)",
-                        "default": 10
+                        "default": 10,
                     }
-                }
-            }
+                },
+            },
         ),
         Tool(
             name="get_order_items",
@@ -349,8 +356,8 @@ async def list_tools() -> list[Tool]:
                         "description": "The order ID from search_past_orders",
                     }
                 },
-                "required": ["order_id"]
-            }
+                "required": ["order_id"],
+            },
         ),
         Tool(
             name="search_products",
@@ -369,11 +376,11 @@ async def list_tools() -> list[Tool]:
                     "limit": {
                         "type": "number",
                         "description": "Maximum number of results (default: 48)",
-                        "default": 48
-                    }
+                        "default": 48,
+                    },
                 },
-                "required": ["query"]
-            }
+                "required": ["query"],
+            },
         ),
         Tool(
             name="get_product_details",
@@ -390,8 +397,8 @@ async def list_tools() -> list[Tool]:
                         "description": "Product code (e.g., '20039684_EA', '21218152_EA')",
                     }
                 },
-                "required": ["product_code"]
-            }
+                "required": ["product_code"],
+            },
         ),
         Tool(
             name="add_to_cart",
@@ -409,17 +416,17 @@ async def list_tools() -> list[Tool]:
                     "quantity": {
                         "type": "number",
                         "description": "Quantity to set (default: 1)",
-                        "default": 1
+                        "default": 1,
                     },
                     "fulfillment_method": {
                         "type": "string",
                         "description": "Fulfillment method: 'pickup' or 'delivery' (default: 'pickup')",
                         "enum": ["pickup", "delivery"],
-                        "default": "pickup"
-                    }
+                        "default": "pickup",
+                    },
                 },
-                "required": ["product_code"]
-            }
+                "required": ["product_code"],
+            },
         ),
         Tool(
             name="remove_from_cart",
@@ -432,16 +439,13 @@ async def list_tools() -> list[Tool]:
                         "description": "Product code to remove",
                     }
                 },
-                "required": ["product_code"]
-            }
+                "required": ["product_code"],
+            },
         ),
         Tool(
             name="view_cart",
             description="View current shopping cart contents with all items, quantities, and prices.",
-            inputSchema={
-                "type": "object",
-                "properties": {}
-            }
+            inputSchema={"type": "object", "properties": {}},
         ),
     ]
 
@@ -459,42 +463,38 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             # Limit results
             orders = result.get("orderHistory", [])[:limit]
 
-            return [TextContent(
-                type="text",
-                text=json.dumps({
-                    "orders": orders,
-                    "totalOnlineOrders": result.get("onlineOrdersCount"),
-                    "totalOfflineOrders": result.get("offlineOrdersCount")
-                }, indent=2)
-            )]
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "orders": orders,
+                            "totalOnlineOrders": result.get("onlineOrdersCount"),
+                            "totalOfflineOrders": result.get("offlineOrdersCount"),
+                        },
+                        indent=2,
+                    ),
+                )
+            ]
 
         elif name == "get_order_items":
             order_id = arguments["order_id"]
             result = client.get_order_details(order_id)
 
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
-            )]
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "search_products":
             query = arguments["query"]
             limit = arguments.get("limit", 48)
             result = client.search_products(query, size=limit)
 
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
-            )]
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "get_product_details":
             product_code = arguments["product_code"]
             result = client.get_product_details(product_code)
 
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
-            )]
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "add_to_cart":
             product_code = arguments["product_code"]
@@ -503,40 +503,25 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
             result = client.add_to_cart(product_code, quantity, fulfillment)
 
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
-            )]
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "remove_from_cart":
             product_code = arguments["product_code"]
             result = client.remove_from_cart(product_code)
 
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
-            )]
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "view_cart":
             result = client.get_cart()
 
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
-            )]
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         else:
-            return [TextContent(
-                type="text",
-                text=f"Unknown tool: {name}"
-            )]
+            return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
     except Exception as e:
         logger.error(f"Error in {name}: {str(e)}", exc_info=True)
-        return [TextContent(
-            type="text",
-            text=f"Error: {str(e)}"
-        )]
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
 async def main_stdio():
@@ -549,10 +534,10 @@ def _build_http_app():
     """Starlette app serving MCP over SSE at /sse (posts to /messages/), plus an
     unauthenticated /health for probes. SSE is used rather than streamable-http because it
     proxies cleanly through Traefik. Set PCEXPRESS_MCP_BEARER to require a bearer on /sse."""
-    from starlette.applications import Starlette
-    from starlette.routing import Mount, Route
-    from starlette.responses import JSONResponse, Response
     from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse, Response
+    from starlette.routing import Mount, Route
 
     bearer = os.getenv("PCEXPRESS_MCP_BEARER")
     sse = SseServerTransport("/messages/")
@@ -562,21 +547,26 @@ def _build_http_app():
             return Response(status_code=401)
         async with sse.connect_sse(request.scope, request.receive, request._send) as (r, w):
             await app.run(r, w, app.create_initialization_options())
-        return Response()  # SSE response is already sent; give Starlette a callable to close cleanly
+        return (
+            Response()
+        )  # SSE response is already sent; give Starlette a callable to close cleanly
 
     async def health(_request):
         return JSONResponse({"status": "ok"})
 
-    return Starlette(routes=[
-        Route("/health", health, methods=["GET"]),
-        Route("/sse", handle_sse, methods=["GET"]),
-        Mount("/messages/", app=sse.handle_post_message),
-    ])
+    return Starlette(
+        routes=[
+            Route("/health", health, methods=["GET"]),
+            Route("/sse", handle_sse, methods=["GET"]),
+            Mount("/messages/", app=sse.handle_post_message),
+        ]
+    )
 
 
 def main_http():
     """Serve MCP over HTTP/SSE (for containers and Kubernetes)."""
     import uvicorn
+
     port = int(os.getenv("PCEXPRESS_HTTP_PORT", "8090"))
     logger.info("Serving MCP over SSE on 0.0.0.0:%s (endpoints: /sse, /health)", port)
     uvicorn.run(_build_http_app(), host="0.0.0.0", port=port)
@@ -585,6 +575,7 @@ def main_http():
 if __name__ == "__main__":
     import asyncio
     import sys
+
     if "--http" in sys.argv or os.getenv("PCEXPRESS_HTTP") == "1":
         main_http()
     else:
