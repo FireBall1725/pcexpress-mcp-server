@@ -39,4 +39,7 @@ jobs:
       channel: ${{ inputs.channel }}
       dry-run: ${{ inputs.dry-run }}
       force-version: ${{ inputs.force-version }}
+      # rc and stable pin themselves into homelab-applications via an
+      # auto-merging PR. Nightly never deploys, whatever this says.
+      deploy-app: pcexpress-mcp
     secrets: inherit
