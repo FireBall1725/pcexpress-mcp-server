@@ -1,0 +1,33 @@
+# Drives the Discord post in #releases.
+
+project:
+  name: PC Express MCP
+  emoji: "🛒"
+  footer: "Unofficial · not affiliated with Loblaw"
+
+channels:
+  stable:
+    announce: true
+    colour: "0x2ECC71"
+    prefix: ""
+  rc:
+    announce: true
+    colour: "0xF1C40F"
+    prefix: "Release candidate — "
+  nightly:
+    announce: false
+
+getting_started: |
+  ```
+  docker pull {{image}}
+  ```
+  Needs a refresh token minted once through `login_pcid.py`; after that the
+  server refreshes headless.
+
+links:
+  - name: Source
+    url: https://github.com/{{repo}}
+  - name: How the auth was cracked
+    url: https://fireball1725.ca/articles/reverse-engineering-pc-express-oauth-secret
+  - name: Changes
+    url: "{{compare_url}}"

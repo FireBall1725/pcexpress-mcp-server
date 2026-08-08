@@ -1,0 +1,23 @@
+name: CI
+
+# This repo had no CI at all before: no build check, no lint, no tests, nothing
+# gating a merge. The jobs live in FireBall1725/workflows.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: FireBall1725/workflows/.github/workflows/ci-python.yml@v1
+    with:
+      # Matches the Dockerfile's python:3.12-slim.
+      python-version: "3.12"
+      # A 700-line module with lazy imports can lint clean and still fail at
+      # startup, and an MCP server that cannot be imported cannot run.
+      import-check: pcexpress_mcp_server

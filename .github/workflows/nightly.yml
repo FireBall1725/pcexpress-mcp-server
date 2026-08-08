@@ -1,0 +1,25 @@
+name: Nightly
+
+# Every merge to main publishes an image and nothing else.
+#
+#   docker pull ghcr.io/fireball1725/pcexpress-mcp:nightly
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nightly:
+    permissions:
+      contents: read
+      packages: write
+    uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
+    with:
+      image: ghcr.io/fireball1725/pcexpress-mcp
+      channel: nightly
+    secrets: inherit

@@ -9,6 +9,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 
+# VERSION is what the shared release workflow passes, in every repo. Left unset
+# for a local build, and version.py then reports 0.0.0-dev.
+ARG VERSION=""
+ENV PCEXPRESS_VERSION=$VERSION
+
 # Rotating refresh token + cached access token live here; mount a volume in prod.
 ENV PCEXPRESS_STATE_DIR=/data \
     PCEXPRESS_HTTP=1 \

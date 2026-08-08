@@ -1,0 +1,39 @@
+# Shared ruff config for Python services. Copied in by scaffold.sh.
+#
+# Python keeps 4-space indentation. Every Python tool, every editor, and PEP 8
+# assume it, and fighting that buys nothing. The 2-space house default applies
+# to everything ruff doesn't own.
+#
+# mypy is deliberately absent. Running it against an untyped module produces
+# hundreds of findings on day one, which ends with it switched off rather than
+# fixed. Add types incrementally first.
+
+line-length = 100
+target-version = "py311"
+indent-width = 4
+
+[lint]
+select = [
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "I",    # import sorting
+  "UP",   # pyupgrade
+  "B",    # bugbear
+  "SIM",  # simplify
+]
+ignore = [
+  "E501",  # line length is the formatter's job, not the linter's
+  "B008",  # function call in default arg: normal in FastAPI/MCP handler signatures
+]
+
+[lint.per-file-ignores]
+# Smoke scripts talk to live services and are run by hand, not by CI. They also
+# fix up sys.path before importing the module under test, which is the whole
+# point of being standalone, so imports legitimately come after code.
+"tools/*.py" = ["T201", "E402"]
+"tests/*.py" = ["S101"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false

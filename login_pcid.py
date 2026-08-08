@@ -14,9 +14,10 @@ Usage:
 
 The client secret is a fixed app value; see README / AUTH_NOTES.md for how it was obtained.
 """
+
 import base64
+import contextlib
 import hashlib
-import os
 import secrets
 import sys
 import urllib.parse
@@ -53,7 +54,9 @@ def extract_code(redirect_input: str, expected_state: str) -> str:
     q = urllib.parse.urlparse(redirect_input).query
     parsed = urllib.parse.parse_qs(q)
     if "error" in parsed:
-        raise SystemExit(f"Authorization returned an error: {parsed.get('error')} {parsed.get('error_description')}")
+        raise SystemExit(
+            f"Authorization returned an error: {parsed.get('error')} {parsed.get('error_description')}"
+        )
     state = parsed.get("state", [None])[0]
     if state and expected_state and state != expected_state:
         print("WARNING: state mismatch — proceed only if you trust this redirect.", file=sys.stderr)
@@ -98,12 +101,12 @@ def login_manual() -> dict:
     print("2) Sign in with your PC id. When the page finishes, the browser will try to")
     print("   open a 'com.loblaw.pcx://...' link and show an error — that is expected.")
     print("   Copy the FULL address (starts with com.loblaw.pcx://) from the address bar.\n")
-    try:
+    with contextlib.suppress(Exception):
         webbrowser.open(url)
-    except Exception:
-        pass
 
-    redirect_input = input("3) Paste the com.loblaw.pcx:// redirect URL (or just the code) here:\n> ")
+    redirect_input = input(
+        "3) Paste the com.loblaw.pcx:// redirect URL (or just the code) here:\n> "
+    )
     code = extract_code(redirect_input, state)
     return exchange_code(code, verifier)
 
@@ -112,11 +115,15 @@ def main():
     tokens = login_manual()
     refresh = tokens.get("refresh_token")
     if not refresh:
-        raise SystemExit(f"No refresh_token in response (scope missing offline_access?): {list(tokens)}")
+        raise SystemExit(
+            f"No refresh_token in response (scope missing offline_access?): {list(tokens)}"
+        )
     print("\n=== Success. Set these on the MCP server: ===\n")
     print(f"PCEXPRESS_CLIENT_SECRET={cfg.CLIENT_SECRET}")
     print(f"PCEXPRESS_REFRESH_TOKEN={refresh}")
-    print(f"\n(access token expires in {tokens.get('expires_in')}s; the server refreshes automatically)")
+    print(
+        f"\n(access token expires in {tokens.get('expires_in')}s; the server refreshes automatically)"
+    )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,9 @@
-mcp>=1.0.0
+# Capped below 2.0 deliberately. mcp 2.0 removed Server.list_tools, which this
+# server uses, so an unpinned build installs 2.x and the image crashes at
+# startup with AttributeError. Found 2026-08-08 by the CI import check; the
+# running deployment was fine only because its image predated 2.0.
+# Migrating to the 2.x API is separate work.
+mcp>=1.0.0,<2
 requests>=2.31.0
 python-dotenv>=1.0.0
 # HTTP/SSE transport for container/Kubernetes deployment (python pcexpress_mcp_server.py --http)
