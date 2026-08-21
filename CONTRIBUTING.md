@@ -215,9 +215,8 @@ Instead, email: [security contact] or use GitHub Security Advisories.
 
 Need help contributing?
 
-- 💬 [GitHub Discussions](https://github.com/YOUR_USERNAME/pcexpress-mcp-server/discussions)
 - 📝 [Documentation](README.md)
-- 🐛 [Issue Tracker](https://github.com/YOUR_USERNAME/pcexpress-mcp-server/issues)
+- 🐛 [Issue Tracker](https://github.com/FireBall1725/pcexpress-mcp-server/issues)
 
 ## Recognition
 
