@@ -65,7 +65,7 @@ Works with all PC Express enabled stores:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/pcexpress-mcp-server.git
+   git clone https://github.com/FireBall1725/pcexpress-mcp-server.git
    cd pcexpress-mcp-server
    ```
 
@@ -335,7 +335,7 @@ See full troubleshooting guide in [SETUP.md](SETUP.md)
 - [ ] Recipe suggestions based on cart
 - [ ] Price comparison across banners
 
-See [Issues](https://github.com/YOUR_USERNAME/pcexpress-mcp-server/issues) for full list.
+See [Issues](https://github.com/FireBall1725/pcexpress-mcp-server/issues) for full list.
 
 ## 🤝 Contributing
 
@@ -350,6 +350,12 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
 5. Commit (`git commit -m 'Add amazing feature'`)
 6. Push (`git push origin feature/amazing-feature`)
 7. Open a Pull Request
+
+## 🍣 Support
+
+Questions, updates, and works in progress: [FireBall Codes on Discord](https://discord.gg/QpV82CFfVD).
+
+If this saved you some time, you can [buy me a sushi roll](https://ko-fi.com/fireball1725).
 
 ## 📜 License
 
@@ -375,8 +381,7 @@ By using this software, you agree to take full responsibility for your usage.
 
 ## 📧 Contact
 
-- **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/pcexpress-mcp-server/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/pcexpress-mcp-server/discussions)
+- **Issues**: [GitHub Issues](https://github.com/FireBall1725/pcexpress-mcp-server/issues)
 
 ---
 
