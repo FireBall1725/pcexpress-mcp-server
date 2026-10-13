@@ -84,37 +84,91 @@ class PCExpressAPI:
     def cart_id(self) -> str:
         """The active cart id. Auto-discovered from the customer profile if not provided."""
         if not self._cart_id:
-            self._cart_id = self.get_customer().get("cartId")
-            if not self._cart_id:
-                raise ValueError("No active cart found. Add an item to your cart, then retry.")
+            self._cart_id = self._discover_cart_id()
         return self._cart_id
 
+    def _cart_matches_banner(self, cart: dict) -> bool:
+        """True when a cart belongs to the configured banner and a real account."""
+        customer = cart.get("customer") or {}
+        return (
+            cart.get("bannerId") == self.banner
+            and cart.get("status", "OPEN") == "OPEN"
+            and customer.get("name") != "Anonymous"
+        )
+
+    def _discover_cart_id(self) -> str:
+        """Find the account's open cart for the configured banner.
+
+        The profile's `cartId` can point at a stale guest cart on another banner
+        (an anonymous Superstore cart, say). Using it sends every add to the wrong
+        store and fails with a 400, so the profile id is checked first and the
+        carts list is the fallback.
+        """
+        customer = self.get_customer()
+        candidate = customer.get("cartId")
+        if candidate:
+            cart = self._request("GET", f"{self.BASE_URL}/carts/{candidate}").json()
+            if self._cart_matches_banner(cart):
+                return candidate
+            logger.warning(
+                "Profile cartId %s is not an open %s cart (banner=%s, customer=%s); "
+                "looking through the carts list",
+                candidate,
+                self.banner,
+                cart.get("bannerId"),
+                (cart.get("customer") or {}).get("name"),
+            )
+
+        # The carts list only carries id and modifiedTime, so each cart is fetched to
+        # check its banner. Newest first, and capped since the first match wins.
+        customer_id = customer.get("customerId") or customer.get("id")
+        if customer_id:
+            url = f"{self.BASE_URL}/customers/{customer_id}/carts"
+            listed = self._request("GET", url, params={"banner": self.banner}).json().get("carts")
+            listed = sorted(listed or [], key=lambda c: c.get("modifiedTime") or "", reverse=True)
+            for entry in listed[:5]:
+                if entry.get("id") in (None, candidate):
+                    continue
+                cart = self._request("GET", f"{self.BASE_URL}/carts/{entry['id']}").json()
+                if self._cart_matches_banner(cart):
+                    return entry["id"]
+
+        raise ValueError(
+            f"No open {self.banner} cart found on the account. Add an item in the "
+            "PC Express app or website to create one, then retry."
+        )
+
     def _refresh_cart_id(self) -> str | None:
-        """Force re-discovery of the active cart id from the customer profile.
+        """Force re-discovery of the active cart id.
 
         Loblaws expires carts server-side; when that happens the cached id is
-        dead and every /carts/{id} call 404s. Dropping the cache and re-reading
-        the customer profile picks up the account's current cart.
+        dead and every /carts/{id} call 404s. Dropping the cache and discovering
+        again picks up the account's current cart for the configured banner.
         """
         self._cart_id = None
-        return self.get_customer().get("cartId")
+        try:
+            return self.cart_id
+        except ValueError:
+            return None
 
     def _request_cart(self, method: str, path: str, **kwargs) -> requests.Response:
-        """Request a cart-scoped endpoint, self-healing a stale/expired cart.
+        """Request a cart-scoped endpoint, self-healing a stale or wrong cart.
 
         `path` must contain a literal ``{cart_id}`` placeholder. On a 404 (the
-        cached cart was deleted server-side) the cart id is re-discovered once
-        and the request retried; if no fresh cart exists, a clear error is
-        raised instead of a bare 404.
+        cached cart was deleted server-side) or a 400 (the cart is on another
+        banner) the cart id is re-discovered once and the request retried. If no
+        fresh cart exists, a clear error is raised instead of a bare 404.
         """
         stale_id = self.cart_id
         url = f"{self.BASE_URL}{path.format(cart_id=stale_id)}"
         try:
             return self._request(method, url, **kwargs)
         except requests.HTTPError as e:
-            if e.response is None or e.response.status_code != 404:
+            if e.response is None or e.response.status_code not in (400, 404):
                 raise
             fresh_id = self._refresh_cart_id()
+            if fresh_id and fresh_id == stale_id and e.response.status_code == 400:
+                raise  # same cart, so the request itself is bad
             if not fresh_id or fresh_id == stale_id:
                 raise ValueError(
                     "The active cart no longer exists and the account has no "
